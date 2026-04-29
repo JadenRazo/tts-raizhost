@@ -45,7 +45,9 @@ type AlertState =
   | { kind: "end-of-book" }
   | null;
 
-const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
+// Mirrors apps/web/src/app/api/tts/route.ts:ALLOWED_SPEEDS. Off-list
+// values are 400'd at the API edge, so the picker never offers them.
+const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5];
 const POSITION_DEBOUNCE_MS = 1_000;
 const PAGE_FETCH_THRESHOLD = 10;
 const PAGE_FETCH_LIMIT = 50;
@@ -74,7 +76,7 @@ function ttsUrl(
 
 function clampSpeed(value: number): number {
   if (!Number.isFinite(value)) return 1.0;
-  return Math.min(2.0, Math.max(0.5, value));
+  return Math.min(1.5, Math.max(0.75, value));
 }
 
 function nearestSpeed(value: number): number {
@@ -262,21 +264,42 @@ export function Reader({
     el.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [currentIdx]);
 
+  // Tab-visibility tracker. Hidden tabs don't get prefetch — a friend
+  // leaving the reader open in a background tab while audio drains
+  // through the speakers would otherwise pull GPU on every sentence
+  // transition for hours. The current sentence still plays from the
+  // already-fetched cache; only the lookahead is paused. When the tab
+  // is brought back, the dependency change re-runs the effect and the
+  // next-idx prefetch fires.
+  const [docVisible, setDocVisible] = useState(true);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    setDocVisible(document.visibilityState !== "hidden");
+    const onChange = () => {
+      setDocVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+
   // Warm the cache for the *next* sentence (currentIdx + 1) so the
-  // auto-advance is a cache hit. Three rules:
+  // auto-advance is a cache hit. Four rules:
   //   1. Only when `audioReady` is true — the active synth has finished
   //      its initial buffer and kokoro is idle.
-  //   2. Debounced — if the user is rapid-clicking Next/Prev, every
+  //   2. Only when the tab is visible — see the visibility tracker
+  //      above.
+  //   3. Debounced — if the user is rapid-clicking Next/Prev, every
   //      click would otherwise queue a fresh kokoro job and saturate
   //      the pod. With PREFETCH_DEBOUNCE_MS the user has to "settle"
   //      on a sentence before we warm the one after it.
-  //   3. Aborted on cleanup — if currentIdx changes again, abort any
+  //   4. Aborted on cleanup — if currentIdx changes again, abort any
   //      in-flight prefetch so kokoro doesn't keep working on the
   //      now-stale guess. The route propagates the client AbortSignal
   //      through to its own kokoro fetch.
   useEffect(() => {
     if (sentenceCount <= 0) return;
     if (!audioReady) return;
+    if (!docVisible) return;
     const next = currentIdx + 1;
     if (next < 0 || next >= sentenceCount) return;
     const controller = new AbortController();
@@ -291,7 +314,7 @@ export function Reader({
       clearTimeout(t);
       controller.abort();
     };
-  }, [bookId, voiceId, speed, currentIdx, sentenceCount, audioReady]);
+  }, [bookId, voiceId, speed, currentIdx, sentenceCount, audioReady, docVisible]);
 
   const handleEnded = useCallback(() => {
     rum.event("audio_ended");
@@ -890,23 +913,36 @@ export function Reader({
         <div className="ml-auto flex items-center gap-3">
           <label className="flex items-center gap-2 text-xs text-muted">
             <span>Voice</span>
-            <select
-              value={voiceId}
-              onChange={(e) => onVoiceChange(e.target.value)}
-              // py-1.5 + leading-6: native <select> collapsed state
-              // ignores most line-height rules, but bumping vertical
-              // padding gives the venus/mars descender enough room.
-              className="rounded-md border border-border bg-bg px-2 py-1.5 text-sm leading-6 text-fg"
-            >
-              {voices.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {voiceDisplayLabel(v)}
-                </option>
-              ))}
-              {voices.find((v) => v.id === voiceId) ? null : (
-                <option value={voiceId}>{voiceId}</option>
-              )}
-            </select>
+            {/*
+              `appearance-none` strips the native chrome (which on iOS
+              and Android ignores CSS height/padding and clips the
+              venus/mars descender on the closed state). We then own
+              the height via py-2, and draw our own caret. The native
+              picker still opens on tap because the underlying control
+              is still <select>.
+            */}
+            <div className="relative">
+              <select
+                value={voiceId}
+                onChange={(e) => onVoiceChange(e.target.value)}
+                className="appearance-none rounded-md border border-border bg-bg pl-3 pr-7 py-2 text-sm leading-5 text-fg"
+              >
+                {voices.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {voiceDisplayLabel(v)}
+                  </option>
+                ))}
+                {voices.find((v) => v.id === voiceId) ? null : (
+                  <option value={voiceId}>{voiceId}</option>
+                )}
+              </select>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[0.65rem] text-muted"
+              >
+                ▾
+              </span>
+            </div>
           </label>
 
           <label className="flex items-center gap-2 text-xs text-muted">
