@@ -73,8 +73,13 @@ spec:
             # tailscaled populates). Fallback = in-cluster CPU pod via
             # ClusterIP. Selector probes primary every 60s; 3 consecutive
             # misses flip to fallback. See lib/tts-backend-selector.ts.
+            # Tailscale IP rather than MagicDNS name. The pod uses
+            # ClusterFirstWithHostNet (resolver = CoreDNS at 10.43.0.10),
+            # which forwards upstream queries to the host's WAN DNS, not
+            # to the Tailscale MagicDNS resolver at 100.100.100.100. The
+            # IP is stable per device for the life of the tailnet.
             - name: TTS_PRIMARY_URL
-              value: http://desktop-7hf36jh:8000
+              value: http://100.107.3.72:8000
             - name: TTS_FALLBACK_URL
               value: http://tts-kokoro:8000
             # Resource detectors so traces carry pod/node identity.

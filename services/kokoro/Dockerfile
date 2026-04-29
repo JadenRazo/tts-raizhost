@@ -51,7 +51,7 @@ RUN groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /sbin/nologin app
 
 WORKDIR /app
-COPY app.py synth.py encode.py ./
+COPY app.py synth.py encode.py metrics.py ./
 RUN chown -R 10001:10001 /app
 
 USER 10001:10001

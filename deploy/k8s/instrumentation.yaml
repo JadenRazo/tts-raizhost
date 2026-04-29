@@ -24,7 +24,7 @@ spec:
     type: parentbased_traceidratio
     argument: "0.05"
   nodejs:
-    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:0.55.0
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:0.73.0
     env:
       - name: OTEL_EXPORTER_OTLP_PROTOCOL
         value: http/protobuf
@@ -44,7 +44,7 @@ spec:
     type: parentbased_traceidratio
     argument: "0.05"
   python:
-    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.51b0
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.62b1
     env:
       - name: OTEL_EXPORTER_OTLP_PROTOCOL
         value: http/protobuf
