@@ -19,9 +19,9 @@ const bodySchema = z
   .object({
     voiceId: z
       .string()
-      // Piper voice IDs: <lang>_<COUNTRY>-<name>-<quality>, e.g.
-      // en_US-lessac-high, en_GB-jenny_dioco-medium.
-      .regex(/^[a-z]{2}_[A-Z]{2}-[a-z][a-z0-9_]*-[a-z]+$/, "Invalid voiceId")
+      // Kokoro voice IDs: <lang_code><gender>_<name>, e.g.
+      // af_heart, am_michael, bf_emma.
+      .regex(/^[a-z]{2}_[a-z][a-z0-9_]*$/, "Invalid voiceId")
       .optional(),
     speed: z.number().min(0.5).max(2.0).optional(),
   })

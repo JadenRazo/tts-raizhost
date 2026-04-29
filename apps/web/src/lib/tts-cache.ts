@@ -22,7 +22,12 @@ import type { Database } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { env } from "@/lib/env";
 
-const VOICE_ID_RE = /^[a-z]{2}_[A-Z]{2}-[a-z][a-z0-9_]*-[a-z]+$/;
+// Kokoro voice ID format: `<lang_code><gender>_<name>`, e.g. af_heart,
+// am_michael, bf_emma. Two lowercase letters, underscore, then a name
+// of lowercase letters and digits. The route's ALLOWED_VOICES set is
+// the authoritative whitelist; this regex is a syntactic sanity check
+// for the cache key path.
+const VOICE_ID_RE = /^[a-z]{2}_[a-z][a-z0-9_]*$/;
 const CACHE_KEY_RE = /^[0-9a-f]{64}$/;
 const CACHE_VERSION = "v1";
 
