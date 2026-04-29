@@ -13,7 +13,7 @@
 // sentences.
 
 import { Buffer } from "node:buffer";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
 
 import {
   audioFileSize,
@@ -25,6 +25,10 @@ import {
 import type { Database } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 import { prerenderInflight, prerenderJobsTotal } from "@/lib/metrics";
+import {
+  getActiveBackend,
+  getActiveUrl,
+} from "@/lib/tts-backend-selector";
 import { synthesizeStream } from "@/lib/tts-client";
 
 // Pause this long between sentences so an active reading session can
@@ -35,6 +39,12 @@ import { synthesizeStream } from "@/lib/tts-client";
 // access via the synth-slot semaphore (PIPER_MAX_CONCURRENT_SYNTH=2);
 // this pause is just a courtesy throttle on top of that.
 const INTER_SENTENCE_PAUSE_MS = 400;
+
+// Page sentences in batches so we don't hold ~4500 row payloads in
+// memory at once on the single web pod (limits.cpu: 1000m). A 100-row
+// page balances DB chatter (45 round-trips for a 4500-sentence book)
+// against per-batch memory pressure (~50 KB).
+const SENTENCE_PAGE_SIZE = 100;
 
 // Drain a ReadableStream into a single Buffer.
 async function drainStream(
@@ -110,72 +120,106 @@ export async function prerenderBook(
       durationMs: 0,
     };
 
-    const sentences = await db
-      .select({
-        idx: schema.bookSentences.idx,
-        text: schema.bookSentences.text,
-      })
-      .from(schema.bookSentences)
-      .where(eq(schema.bookSentences.bookId, bookId))
-      .orderBy(asc(schema.bookSentences.idx));
-
-    stats.total = sentences.length;
-
-    for (const sentence of sentences) {
-      if (signal?.aborted) break;
-
-      const sha = cacheKey(voiceId, speed, sentence.text);
-      const hit = await cacheLookup(db, sha);
-      if (hit) {
-        const onDisk = await audioFileSize(hit.audioPath);
-        if (onDisk !== null) {
-          stats.skipped++;
-          continue;
-        }
-      }
-
-      try {
-        const stream = await synthesizeStream(
-          sentence.text,
-          voiceId,
-          speed,
-          signal,
-        );
-        const audio = await drainStream(stream);
-        if (audio.byteLength === 0) {
-          stats.failed++;
-          continue;
-        }
-        await cacheStore(db, {
-          cacheKey: sha,
-          voiceId,
-          textHash: textHash(sentence.text),
-          audio,
-          durationMs: 0,
-        });
-        stats.rendered++;
-      } catch (err) {
-        if (signal?.aborted) break;
-        stats.failed++;
-        console.warn("[prerender] synth failed", {
-          bookId,
-          idx: sentence.idx,
-          err: err instanceof Error ? err.message : String(err),
-        });
-      }
-
-      // Yield to active synth requests. Sleep is interruptible via the
-      // AbortSignal so a Cancel from the caller doesn't have to wait
-      // out the pause.
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, INTER_SENTENCE_PAUSE_MS);
-        const onAbort = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-        signal?.addEventListener("abort", onAbort, { once: true });
-      });
+    // Bulk prerender is GPU-only. The CPU fallback pod has limit
+    // 1 CPU and KOKORO_MAX_CONCURRENT_SYNTH=1; running ~4500
+    // sentences through it would block real users for the entire
+    // run. If the breaker is on CPU we abort the job and let the
+    // probe loop flip back to GPU before another caller retries.
+    if (getActiveBackend() !== "gpu") {
+      stats.durationMs = Date.now() - started;
+      console.info(
+        "[prerender] skipped: gpu backend not active",
+        { bookId, voiceId, speed },
+      );
+      return stats;
     }
+    const synthBaseUrl = getActiveUrl();
+
+    // Page through sentences instead of loading the full ~4500-row set
+    // into memory at once. The (book_id, idx) primary key serves both
+    // the WHERE-and-order plan and the cursor pagination.
+    let nextIdx = 0;
+    let pageRows = 0;
+    do {
+      if (signal?.aborted) break;
+      const page = await db
+        .select({
+          idx: schema.bookSentences.idx,
+          text: schema.bookSentences.text,
+        })
+        .from(schema.bookSentences)
+        .where(
+          and(
+            eq(schema.bookSentences.bookId, bookId),
+            gte(schema.bookSentences.idx, nextIdx),
+          ),
+        )
+        .orderBy(asc(schema.bookSentences.idx))
+        .limit(SENTENCE_PAGE_SIZE);
+      pageRows = page.length;
+      stats.total += pageRows;
+
+      for (const sentence of page) {
+        if (signal?.aborted) break;
+
+        const sha = cacheKey(voiceId, speed, sentence.text);
+        const hit = await cacheLookup(db, sha);
+        if (hit) {
+          const onDisk = await audioFileSize(hit.audioPath);
+          if (onDisk !== null) {
+            stats.skipped++;
+            continue;
+          }
+        }
+
+        try {
+          const stream = await synthesizeStream(
+            sentence.text,
+            voiceId,
+            speed,
+            signal,
+            { baseUrl: synthBaseUrl },
+          );
+          const audio = await drainStream(stream);
+          if (audio.byteLength === 0) {
+            stats.failed++;
+            continue;
+          }
+          await cacheStore(db, {
+            cacheKey: sha,
+            voiceId,
+            textHash: textHash(sentence.text),
+            audio,
+            durationMs: 0,
+          });
+          stats.rendered++;
+        } catch (err) {
+          if (signal?.aborted) break;
+          stats.failed++;
+          console.warn("[prerender] synth failed", {
+            bookId,
+            idx: sentence.idx,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
+
+        // Yield to active synth requests. Sleep is interruptible via
+        // the AbortSignal so a Cancel from the caller doesn't have to
+        // wait out the pause.
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, INTER_SENTENCE_PAUSE_MS);
+          const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          signal?.addEventListener("abort", onAbort, { once: true });
+        });
+      }
+
+      if (pageRows > 0) {
+        nextIdx = page[page.length - 1].idx + 1;
+      }
+    } while (pageRows === SENTENCE_PAGE_SIZE);
 
     stats.durationMs = Date.now() - started;
     return stats;
