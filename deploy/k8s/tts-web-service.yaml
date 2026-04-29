@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tts-web
+  namespace: tts
+  labels:
+    app.kubernetes.io/name: tts-web
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: tts-raizhost
+spec:
+  # ClusterIP so in-cluster Prometheus has a stable selector target. The
+  # public-facing path remains Caddy → 127.0.0.1:3101 directly (the pod
+  # is hostNetwork: true), so this Service is purely for the
+  # ServiceMonitor scrape and any other in-cluster reachability needs.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: tts-web
+  ports:
+    - name: http
+      port: 3101
+      targetPort: 3101

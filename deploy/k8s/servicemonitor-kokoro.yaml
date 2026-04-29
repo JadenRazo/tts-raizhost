@@ -1,0 +1,34 @@
+---
+# ServiceMonitor for the kokoro (Piper) TTS service's /metrics surface.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tts-kokoro
+  namespace: tts
+  labels:
+    release: kube-prometheus-stack
+    app.kubernetes.io/name: tts-kokoro
+    app.kubernetes.io/part-of: tts-raizhost
+    app.kubernetes.io/component: tts
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tts-kokoro
+  namespaceSelector:
+    matchNames:
+      - tts
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      relabelings:
+        - action: replace
+          targetLabel: job
+          replacement: tts-kokoro
+        - action: replace
+          targetLabel: service
+          replacement: tts-kokoro
+        - action: replace
+          targetLabel: component
+          replacement: tts

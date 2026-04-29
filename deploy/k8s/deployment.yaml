@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tts-web
+  namespace: tts
+  labels:
+    app.kubernetes.io/name: tts-web
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: tts-raizhost
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tts-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tts-web
+        app.kubernetes.io/component: web
+        app.kubernetes.io/part-of: tts-raizhost
+      annotations:
+        # OTel auto-instrumentation: the operator injects an init
+        # container that copies the Node.js OTel SDK into the pod and
+        # points it at Tempo. See deploy/k8s/instrumentation.yaml.
+        instrumentation.opentelemetry.io/inject-nodejs: "tts/tts-nodejs-instrumentation"
+    spec:
+      serviceAccountName: tts-web
+      automountServiceAccountToken: false
+      # hostNetwork lets the pod reach shared-postgres at 127.0.0.1:5433
+      # (the docker-proxy bind on the host loopback). Caddy on the host
+      # proxies tts.raizhost.com → 127.0.0.1:3101 directly, so we don't
+      # need a Service or Ingress in-cluster.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: tts-web:v0.5.0
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - secretRef:
+                name: tts-app
+          env:
+            # Override values from the secret/.env that should differ in prod.
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3101"
+            - name: HOSTNAME
+              # Bind 0.0.0.0 so in-cluster Prometheus pods can reach
+              # /api/metrics via the tts-web Service. Public access
+              # remains gated by Caddy (which proxies tts.raizhost.com →
+              # 127.0.0.1:3101 only) plus the host firewall. /api/metrics
+              # additionally rejects requests carrying X-Forwarded-For
+              # or non-RFC1918 source IPs as a defense-in-depth.
+              value: 0.0.0.0
+            # TTS backend routing. Primary = home GPU box reached over
+            # Tailscale (resolved via MagicDNS — works because tts-web is
+            # hostNetwork:true and inherits the node's resolv.conf which
+            # tailscaled populates). Fallback = in-cluster CPU pod via
+            # ClusterIP. Selector probes primary every 60s; 3 consecutive
+            # misses flip to fallback. See lib/tts-backend-selector.ts.
+            - name: TTS_PRIMARY_URL
+              value: http://desktop-7hf36jh:8000
+            - name: TTS_FALLBACK_URL
+              value: http://tts-kokoro:8000
+            # Resource detectors so traces carry pod/node identity.
+            - name: OTEL_NODE_RESOURCE_DETECTORS
+              value: env,host,os,k8s
+          ports:
+            - name: http
+              containerPort: 3101
+              hostPort: 3101
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 3101
+              host: 127.0.0.1
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 3101
+              host: 127.0.0.1
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            # Next.js standalone needs writable /tmp and /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/.next/cache
+            # Persistent user uploads + audio cache. hostPath PVs on the
+            # single-node k3s box; backed by /var/lib/tts-raizhost/{books,cache}.
+            - name: books
+              mountPath: /data/books
+            - name: cache
+              mountPath: /data/cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}
+        - name: books
+          hostPath:
+            path: /var/lib/tts-raizhost/books
+            type: Directory
+        - name: cache
+          hostPath:
+            path: /var/lib/tts-raizhost/cache
+            type: Directory

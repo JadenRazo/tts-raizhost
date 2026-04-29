@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+/* Design tokens — single source of truth for color, type, and shape.
+ *
+ * Contrast: every text-on-background pairing in both color schemes is
+ * verified at >= 4.5:1 (body) or >= 3:1 (large text, 18pt+).
+ *
+ *   Light  bg #ffffff  fg #0a0a0a (19.6:1)  muted #525252 ( 7.6:1)
+ *   Dark   bg #0a0a0a  fg #fafafa (19.0:1)  muted #a3a3a3 ( 8.4:1)
+ *
+ * Tailwind 4 turns each --color-* below into a utility (bg-bg, text-fg,
+ * border-border, etc.). The dark-mode block redefines the same variables
+ * on :root, so the same utility classes flip without any dark: prefixes.
+ */
+
+@theme {
+  --color-bg: #ffffff;
+  --color-surface: #fafafa;
+  --color-surface-2: #f5f5f5;
+  --color-fg: #0a0a0a;
+  --color-muted: #525252;
+  --color-subtle: #6b6b6b;
+  --color-border: #e5e5e5;
+  --color-border-strong: #a3a3a3;
+  --color-accent: #0a0a0a;
+  --color-accent-hover: #262626;
+  --color-accent-fg: #ffffff;
+  --color-focus-ring: #0a0a0a;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fef2f2;
+  --color-success: #15803d;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+}
+
+@layer base {
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: #0a0a0a;
+      --color-surface: #171717;
+      --color-surface-2: #1f1f1f;
+      --color-fg: #fafafa;
+      --color-muted: #a3a3a3;
+      --color-subtle: #8f8f8f;
+      --color-border: #262626;
+      --color-border-strong: #525252;
+      --color-accent: #fafafa;
+      --color-accent-hover: #e5e5e5;
+      --color-accent-fg: #0a0a0a;
+      --color-focus-ring: #fafafa;
+      --color-danger: #fca5a5;
+      --color-danger-soft: #450a0a;
+      --color-success: #86efac;
+    }
+  }
+
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Inputs and form controls — let them inherit the theme rather than
+   * snapping back to UA defaults that look wrong in dark mode. */
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  /* Visible focus on every interactive element. WCAG 2.4.7. */
+  :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-focus-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--color-fg);
+    color: var(--color-bg);
+  }
+}

@@ -1,0 +1,140 @@
+---
+# Alerting rules for tts-raizhost. The `release: kube-prometheus-stack`
+# label is what the operator's PrometheusRuleSelector matches; without it,
+# Alertmanager won't see these rules.
+#
+# Severity convention matches the rest of raizhost-infra:
+#   - critical: pages on-call (currently routed to whatever Alertmanager
+#     is configured for — likely email/Slack via the existing receiver)
+#   - warning:  shows in dashboards, logs to incident channel, doesn't page
+#
+# All thresholds are starting points. Expect a one-week tuning pass once
+# real traffic populates the histograms.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tts-raizhost
+  namespace: tts
+  labels:
+    release: kube-prometheus-stack
+    app.kubernetes.io/name: tts-raizhost
+    app.kubernetes.io/part-of: tts-raizhost
+spec:
+  groups:
+    - name: tts-raizhost.availability
+      interval: 30s
+      rules:
+        - alert: TtsKokoroDown
+          expr: up{job="tts-kokoro"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            app: tts-raizhost
+          annotations:
+            summary: "Kokoro TTS pod is down"
+            description: "tts-kokoro target {{ $labels.instance }} has been down for >2m. PDF playback is broken until this recovers."
+            runbook: "kubectl -n tts get pod -l app.kubernetes.io/name=tts-kokoro && kubectl -n tts logs -l app.kubernetes.io/name=tts-kokoro --tail=200"
+
+        - alert: TtsWebDown
+          expr: up{job="tts-web"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            app: tts-raizhost
+          annotations:
+            summary: "tts-web pod is down"
+            description: "tts-web target {{ $labels.instance }} has been down for >2m. The reader UI is unreachable."
+            runbook: "kubectl -n tts get pod -l app.kubernetes.io/name=tts-web && kubectl -n tts logs -l app.kubernetes.io/name=tts-web --tail=200"
+
+    - name: tts-raizhost.tts-pipeline
+      interval: 30s
+      rules:
+        - alert: TtsKokoroOverflowHigh
+          # Ratio of 503-overflows to accepted inputs over 5 minutes.
+          # Trigger >2% to catch sustained queue saturation while
+          # tolerating brief bursts that recover on retry.
+          expr: |
+            sum(rate(tts_kokoro_overflow_total[5m]))
+              /
+            clamp_min(sum(rate(tts_kokoro_synth_inputs_total[5m])), 0.001)
+              > 0.02
+          for: 5m
+          labels:
+            severity: warning
+            app: tts-raizhost
+          annotations:
+            summary: "Kokoro queue is shedding >2% of requests"
+            description: "Synth queue saturation is causing 503s. Either bump PIPER_MAX_CONCURRENT_SYNTH or investigate slow voices."
+
+        - alert: TtsCacheMissP95High
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(tts_request_duration_seconds_bucket{cache="miss"}[10m])) by (le)
+            ) > 3
+          for: 10m
+          labels:
+            severity: warning
+            app: tts-raizhost
+          annotations:
+            summary: "Cache-miss p95 above 3s for 10m"
+            description: "Users hitting cold sentences wait too long. Check kokoro queue + synth time."
+
+        - alert: TtsKokoroSynthSlow
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(tts_kokoro_synth_duration_seconds_to_first_byte_bucket[10m])) by (le)
+            ) > 1.5
+          for: 10m
+          labels:
+            severity: warning
+            app: tts-raizhost
+          annotations:
+            summary: "Kokoro synth-to-first-byte p95 > 1.5s"
+            description: "Piper synthesis is slower than expected. Check pod CPU saturation, voice load state, or whether INT8 is mistakenly preferred (it's slower than FP32 on this CPU)."
+
+        - alert: TtsCacheHitRatioLow
+          expr: |
+            sum(rate(tts_cache_hits_total[15m]))
+              /
+            clamp_min(
+              sum(rate(tts_cache_hits_total[15m])) + sum(rate(tts_cache_misses_total[15m])),
+              0.001
+            ) < 0.5
+          for: 15m
+          labels:
+            severity: warning
+            app: tts-raizhost
+          annotations:
+            summary: "TTS cache hit ratio dropped below 50%"
+            description: "Either prerender is failing, the cache filesystem is unreachable, or users are switching voices/speed faster than prerender can keep up."
+
+    - name: tts-raizhost.user-experience
+      interval: 30s
+      rules:
+        - alert: TtsRumStallsHigh
+          # >0.1 stalls/sec over 10m is roughly 1 stall every 10s
+          # aggregated across all active sessions. For a single-tenant
+          # tool this is loud — bump if it false-fires.
+          expr: sum(rate(rum_audio_stalls_total[10m])) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+            app: tts-raizhost
+          annotations:
+            summary: "Audio stalls observed in the reader"
+            description: "Users are seeing buffer underruns / paused playback. Correlate with kokoro queue + cache hit ratio panels."
+
+        - alert: TtsRumPlayToAudibleSlow
+          # User-perceived play→audible latency. p95 > 3s for 15m is the
+          # threshold where the play button feels broken.
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(rum_play_to_audible_seconds_bucket[15m])) by (le)
+            ) > 3
+          for: 15m
+          labels:
+            severity: warning
+            app: tts-raizhost
+          annotations:
+            summary: "Play→audible p95 above 3s"
+            description: "The play button feels slow. Likely a cold cache + slow synth combination."

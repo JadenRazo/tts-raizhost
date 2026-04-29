@@ -1,0 +1,20 @@
+# Engine: Kokoro v1.0 (Hexgrad) via kokoro-onnx — ONNX Runtime CPU path.
+# Pinned minimums verified against PyPI on 2026-04-29.
+#
+# Voices shipped (English, hand-picked from the 54-voice catalog):
+#   af_heart   (female, US, grade A,  default)
+#   af_bella   (female, US, grade A-, warm/expressive)
+#   am_michael (male,   US, grade C+, well-tested)
+#   am_puck    (male,   US, grade C+, polished)
+#
+# All voices live in a single voices-v1.0.bin (~28 MB); the model is a
+# single kokoro-v1.0.onnx (~328 MB). scripts/bootstrap-models.sh fetches
+# both from the kokoro-onnx GitHub release into /var/lib/tts-raizhost/
+# models/kokoro on the node. The Dockerfile mounts /models read-only.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+kokoro-onnx>=0.5.0
+onnxruntime>=1.20.1
+numpy>=1.26,<3
+pydantic>=2.9
+prometheus-client>=0.21

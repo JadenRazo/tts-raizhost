@@ -1,0 +1,24 @@
+# Engine: Kokoro v1.0 (Hexgrad) via PyTorch on NVIDIA CUDA.
+# Verified against PyPI on 2026-04-29.
+#
+# Voices shipped (English, identical to services/kokoro/):
+#   af_heart   (female, US, grade A,  default)
+#   af_bella   (female, US, grade A-, warm/expressive)
+#   am_michael (male,   US, grade C+, well-tested)
+#   am_puck    (male,   US, grade C+, polished)
+#
+# torch is INTENTIONALLY NOT pinned here — install it via the bootstrap
+# script (scripts/bootstrap-gpu-host.ps1) with --index-url pointing at
+# the right CUDA wheel index for the host GPU. RTX 5070 (Blackwell, sm_120)
+# requires torch>=2.6 with CUDA 12.8 wheels:
+#   pip install --index-url https://download.pytorch.org/whl/cu128 "torch>=2.6"
+# Putting torch in this requirements.txt would let pip install the CPU
+# wheel by accident.
+fastapi>=0.115
+uvicorn[standard]>=0.32
+kokoro>=0.9.4
+misaki[en]>=0.7
+prometheus-client>=0.21
+numpy>=1.26,<3
+pydantic>=2.9
+soundfile>=0.12

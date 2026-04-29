@@ -1,0 +1,331 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "User-experience dashboard for tts.raizhost.com — perceived play latency, stalls, errors, cache effectiveness, kokoro engine health, throughput.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "Row 1 — User-perceived UX",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Time from user clicking Play to first audible audio sample. The single most important number on this dashboard.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto", "spanNulls": false},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 1},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(rum_play_to_audible_seconds_bucket[5m])) by (le))", "legendFormat": "p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(rum_play_to_audible_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum(rate(rum_play_to_audible_seconds_bucket[5m])) by (le))", "legendFormat": "p99", "refId": "C"}
+      ],
+      "title": "Play → audible (RUM)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Stall-start events per second across all sessions, plus stall duration p95.",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 1},
+      "id": 2,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum(rate(rum_audio_stalls_total[5m]))", "legendFormat": "stalls/sec", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(rum_audio_stall_duration_seconds_bucket[5m])) by (le))", "legendFormat": "stall duration p95 (s)", "refId": "B"}
+      ],
+      "title": "Audio stalls (RUM)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Audio errors split by kind: service-warming (kokoro busy), synth-failed (sentence skipped), other.",
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "fillOpacity": 30, "stacking": {"mode": "normal", "group": "A"}}}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 9},
+      "id": 3,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum by (kind) (rate(rum_audio_errors_total[5m]))", "legendFormat": "{{kind}}", "refId": "A"}
+      ],
+      "title": "Audio errors by kind (RUM)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Web Vitals p75 — Largest Contentful Paint and Interaction to Next Paint, on the reader page.",
+      "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2.5}, {"color": "red", "value": 4}]}}},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 9},
+      "id": 4,
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area"},
+      "targets": [
+        {"expr": "histogram_quantile(0.75, sum(rate(rum_web_vital_bucket{metric=\"LCP\"}[15m])) by (le))", "refId": "A"}
+      ],
+      "title": "LCP p75",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.2}, {"color": "red", "value": 0.5}]}}},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 9},
+      "id": 5,
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area"},
+      "targets": [
+        {"expr": "histogram_quantile(0.75, sum(rate(rum_web_vital_bucket{metric=\"INP\"}[15m])) by (le))", "refId": "A"}
+      ],
+      "title": "INP p75",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 17},
+      "id": 200,
+      "panels": [],
+      "title": "Row 2 — TTS server path",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "/api/tts duration split by cache outcome. Hits should sit at single-digit ms; misses cover synth + network.",
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "fillOpacity": 10}}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+      "id": 6,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(tts_request_duration_seconds_bucket{cache=\"hit\"}[5m])) by (le))", "legendFormat": "hit p50", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(tts_request_duration_seconds_bucket{cache=\"hit\"}[5m])) by (le))", "legendFormat": "hit p95", "refId": "B"},
+        {"expr": "histogram_quantile(0.50, sum(rate(tts_request_duration_seconds_bucket{cache=\"miss\"}[5m])) by (le))", "legendFormat": "miss p50", "refId": "C"},
+        {"expr": "histogram_quantile(0.95, sum(rate(tts_request_duration_seconds_bucket{cache=\"miss\"}[5m])) by (le))", "legendFormat": "miss p95", "refId": "D"}
+      ],
+      "title": "/api/tts duration by cache",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "/api/tts 5xx rate. Spikes here mean kokoro is unreachable or overloaded.",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 18},
+      "id": 7,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum(rate(tts_request_duration_seconds_count{status=~\"5..\"}[5m]))", "legendFormat": "5xx/sec", "refId": "A"}
+      ],
+      "title": "/api/tts 5xx rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Cache hit ratio over 5 minutes. Below 50% sustained → prerender broken or users churning voice/speed.",
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "green", "value": 0.8}]}}},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 18},
+      "id": 8,
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "auto", "colorMode": "background", "graphMode": "area"},
+      "targets": [
+        {"expr": "sum(rate(tts_cache_hits_total[5m])) / clamp_min(sum(rate(tts_cache_hits_total[5m])) + sum(rate(tts_cache_misses_total[5m])), 0.001)", "refId": "A"}
+      ],
+      "title": "Cache hit ratio",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Time the web app spent waiting for kokoro on the cache-miss path. Higher than synth p95 means queue saturation.",
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 26},
+      "id": 9,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(tts_kokoro_upstream_duration_seconds_bucket[5m])) by (le, voice))", "legendFormat": "p95 {{voice}}", "refId": "A"}
+      ],
+      "title": "Web → kokoro upstream p95 (cache miss)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 34},
+      "id": 300,
+      "panels": [],
+      "title": "Row 3 — Kokoro engine",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Synth-to-first-byte heatmap by voice. Vertical bands suggest per-voice slowness; broad bands suggest CPU saturation.",
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 35},
+      "id": 10,
+      "options": {"calculate": false, "yAxis": {"unit": "s"}},
+      "targets": [
+        {"expr": "sum by (le) (increase(tts_kokoro_synth_duration_seconds_to_first_byte_bucket[$__rate_interval]))", "format": "heatmap", "refId": "A"}
+      ],
+      "title": "Synth → first byte (heatmap)",
+      "type": "heatmap"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Synth concurrency saturation (1.0 = pod is at PIPER_MAX_CONCURRENT_SYNTH).",
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1.5, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.95}]}}},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 35},
+      "id": 11,
+      "options": {"orientation": "auto", "showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"values": false, "calcs": ["lastNotNull"]}},
+      "targets": [
+        {"expr": "tts_kokoro_queue_saturation", "legendFormat": "{{instance}}", "refId": "A"}
+      ],
+      "title": "Queue saturation",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Time spent waiting to acquire a synth slot. Capped by PIPER_QUEUE_TIMEOUT_MS — values near the cap mean overflow is imminent.",
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 43},
+      "id": 12,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(tts_kokoro_queue_wait_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "A"}
+      ],
+      "title": "Queue wait p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "503 (busy) responses returned by kokoro, by voice.",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 43},
+      "id": 13,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum by (voice) (rate(tts_kokoro_overflow_total[5m]))", "legendFormat": "{{voice}}", "refId": "A"}
+      ],
+      "title": "Overflow 503s by voice",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "ffmpeg subprocess failures, by kind.",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 43},
+      "id": 14,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum by (kind) (rate(tts_kokoro_ffmpeg_errors_total[5m]))", "legendFormat": "{{kind}}", "refId": "A"}
+      ],
+      "title": "ffmpeg errors",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 51},
+      "id": 400,
+      "panels": [],
+      "title": "Row 4 — Throughput / capacity",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Sentences synthesized per minute (cache misses, all voices summed).",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 52},
+      "id": 15,
+      "options": {"reduceOptions": {"values": false, "calcs": ["lastNotNull"]}, "orientation": "auto", "textMode": "auto", "colorMode": "value", "graphMode": "area"},
+      "targets": [
+        {"expr": "sum(rate(tts_kokoro_synth_inputs_total[1m])) * 60", "refId": "A"}
+      ],
+      "title": "Sentences/min",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Background prerender jobs in flight. Spikes during voice/speed changes.",
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 52},
+      "id": 16,
+      "options": {"legend": {"displayMode": "list"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "prerender_inflight", "legendFormat": "in-flight", "refId": "A"}
+      ],
+      "title": "Prerender jobs in-flight",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource_prom}"},
+      "description": "Synth duration heatmap split by sentence-length bucket. Long sentences land in the 'l' / 'xl' rows.",
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 52},
+      "id": 17,
+      "options": {"calculate": false, "yAxis": {"unit": "s"}},
+      "targets": [
+        {"expr": "sum by (le, text_len_bucket) (increase(tts_kokoro_synth_duration_seconds_to_first_byte_bucket[$__rate_interval]))", "format": "heatmap", "legendFormat": "{{text_len_bucket}}", "refId": "A"}
+      ],
+      "title": "Synth duration by text length",
+      "type": "heatmap"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "${datasource_loki}"},
+      "description": "Top-N slowest sentences from kokoro structured logs. Useful for finding the actual long-sentence outliers driving p99 latency.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 60},
+      "id": 18,
+      "options": {"showLabels": false, "showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "dedupStrategy": "none", "sortOrder": "Descending"},
+      "targets": [
+        {"expr": "{namespace=\"tts\", app_kubernetes_io_name=\"tts-kokoro\"} | json | ms_total > 2000 | line_format \"{{.text_length}}c voice={{.voice}} ms_total={{.ms_total}} first_byte={{.ms_to_first_byte}}\"", "refId": "A"}
+      ],
+      "title": "Slow sentences (>2s)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["tts", "raizhost", "rum"],
+  "templating": {
+    "list": [
+      {
+        "current": {"text": "Prometheus", "value": "Prometheus"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Prometheus",
+        "multi": false,
+        "name": "datasource_prom",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"text": "Loki", "value": "Loki"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Loki",
+        "multi": false,
+        "name": "datasource_loki",
+        "options": [],
+        "query": "loki",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-3h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "TTS UX",
+  "uid": "tts-ux",
+  "version": 1,
+  "weekStart": ""
+}

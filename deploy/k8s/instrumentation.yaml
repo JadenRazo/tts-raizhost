@@ -1,0 +1,50 @@
+---
+# OTel auto-instrumentation recipes for the tts namespace.
+#
+# Pods opt in via annotation:
+#   instrumentation.opentelemetry.io/inject-nodejs: "tts/tts-nodejs-instrumentation"
+#   instrumentation.opentelemetry.io/inject-python: "tts/tts-python-instrumentation"
+#
+# Sampling at 5% — TTS is read-heavy (every play emits a trace) and we
+# want headroom for the kokoro pod's CPU budget. Bump to 10% if traces
+# become too sparse for diagnosis; the operator-managed Tempo retains
+# 72h so the higher rate is fine for short-term debugging.
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: tts-nodejs-instrumentation
+  namespace: tts
+spec:
+  exporter:
+    endpoint: http://tempo.monitoring.svc.cluster.local:4318
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: parentbased_traceidratio
+    argument: "0.05"
+  nodejs:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs:0.55.0
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: http/protobuf
+---
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: tts-python-instrumentation
+  namespace: tts
+spec:
+  exporter:
+    endpoint: http://tempo.monitoring.svc.cluster.local:4318
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: parentbased_traceidratio
+    argument: "0.05"
+  python:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:0.51b0
+    env:
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: http/protobuf

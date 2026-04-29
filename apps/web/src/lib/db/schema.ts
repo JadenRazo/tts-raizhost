@@ -1,0 +1,387 @@
+// Database schema for tts.raizhost.com.
+// drizzle-kit reads this file for migration generation.
+//
+// Column naming convention:
+//   - TypeScript keys: camelCase  (e.g. userId)
+//   - PostgreSQL columns: snake_case (passed as first string arg)
+//
+// Better Auth tables follow the v1.5+ schema with usePlural: true.
+
+import { relations, sql } from "drizzle-orm";
+import {
+  bigint,
+  boolean,
+  index,
+  integer,
+  pgTable,
+  primaryKey,
+  real,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+const nowTz = (name: string) =>
+  timestamp(name, { withTimezone: true, mode: "date" }).defaultNow().notNull();
+
+const tz = (name: string) =>
+  timestamp(name, { withTimezone: true, mode: "date" });
+
+// ---------------------------------------------------------------------------
+// users (Better Auth)
+// ---------------------------------------------------------------------------
+// Email is the sole login identifier. We never send mail and never verify;
+// the address is stored as-typed but compared case-insensitively (the unique
+// index is on lower(email)). TOTP is the only credential.
+
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: text("email").notNull(),
+    emailVerified: boolean("email_verified").default(false).notNull(),
+    /** Better Auth reads `name` for cookie payload; we mirror email into it
+     * so existing setSessionCookie code paths keep working without a custom
+     * coercion helper. */
+    name: text("name"),
+    image: text("image"),
+
+    totpSecretEnc: text("totp_secret_enc"),
+    recoveryCodesEnc: text("recovery_codes_enc"),
+    enrolledAt: tz("enrolled_at"),
+    isAdmin: boolean("is_admin").default(false).notNull(),
+
+    createdAt: nowTz("created_at"),
+    updatedAt: nowTz("updated_at"),
+  },
+  (t) => [
+    uniqueIndex("users_email_lower_idx").on(sql`lower(${t.email})`),
+  ],
+);
+
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// sessions (Better Auth)
+// ---------------------------------------------------------------------------
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    token: text("token").unique().notNull(),
+    expiresAt: timestamp("expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    createdAt: nowTz("created_at"),
+    updatedAt: nowTz("updated_at"),
+  },
+  (t) => [
+    uniqueIndex("sessions_token_idx").on(t.token),
+    index("sessions_user_id_idx").on(t.userId),
+    index("sessions_expires_at_idx").on(t.expiresAt),
+  ],
+);
+
+export type Session = typeof sessions.$inferSelect;
+export type NewSession = typeof sessions.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// accounts (Better Auth)
+// ---------------------------------------------------------------------------
+// Required by the Drizzle adapter even when no OAuth providers are wired.
+
+export const accounts = pgTable("accounts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .references(() => users.id, { onDelete: "cascade" })
+    .notNull(),
+  accountId: text("account_id").notNull(),
+  providerId: text("provider_id").notNull(),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  accessTokenExpiresAt: tz("access_token_expires_at"),
+  refreshTokenExpiresAt: tz("refresh_token_expires_at"),
+  scope: text("scope"),
+  idToken: text("id_token"),
+  password: text("password"),
+  createdAt: nowTz("created_at"),
+  updatedAt: nowTz("updated_at"),
+});
+
+export type Account = typeof accounts.$inferSelect;
+export type NewAccount = typeof accounts.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// verifications (Better Auth)
+// ---------------------------------------------------------------------------
+
+export const verifications = pgTable("verifications", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  identifier: text("identifier").notNull(),
+  value: text("value").notNull(),
+  expiresAt: timestamp("expires_at", {
+    withTimezone: true,
+    mode: "date",
+  }).notNull(),
+  createdAt: nowTz("created_at"),
+  updatedAt: nowTz("updated_at"),
+});
+
+export type Verification = typeof verifications.$inferSelect;
+export type NewVerification = typeof verifications.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// enrollment_tokens
+// ---------------------------------------------------------------------------
+// One-time URL-safe token issued by `scripts/create-user.ts`. The user opens
+// /enroll/<token>, scans QR, submits TOTP — at which point the token is
+// burned and the user's totp_secret_enc + recovery_codes_enc are populated.
+
+export const enrollmentTokens = pgTable(
+  "enrollment_tokens",
+  {
+    token: text("token").primaryKey(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    expiresAt: timestamp("expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
+    usedAt: tz("used_at"),
+    createdAt: nowTz("created_at"),
+  },
+  (t) => [
+    index("enrollment_tokens_user_id_idx").on(t.userId),
+    index("enrollment_tokens_expires_at_idx").on(t.expiresAt),
+  ],
+);
+
+export type EnrollmentToken = typeof enrollmentTokens.$inferSelect;
+export type NewEnrollmentToken = typeof enrollmentTokens.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// books
+// ---------------------------------------------------------------------------
+// Library of uploaded PDFs. The blob lives on disk at
+// /var/lib/tts-raizhost/books/<user_id>/<book_id>.pdf; this row is the index.
+
+export const books = pgTable(
+  "books",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    title: text("title").notNull(),
+    author: text("author"),
+    originalFilename: text("original_filename").notNull(),
+    filePath: text("file_path").notNull(),
+    byteSize: bigint("byte_size", { mode: "number" }).notNull(),
+    pageCount: integer("page_count").notNull(),
+    sentenceCount: integer("sentence_count").notNull(),
+    /** sha256 of the normalized extracted text — used for cache invalidation
+     * when the same book is re-uploaded with the same content. */
+    textSha256: text("text_sha256").notNull(),
+    uploadedAt: nowTz("uploaded_at"),
+    lastOpenedAt: tz("last_opened_at"),
+  },
+  (t) => [
+    index("books_user_id_last_opened_idx").on(
+      t.userId,
+      sql`${t.lastOpenedAt} desc nulls last`,
+    ),
+    index("books_text_sha256_idx").on(t.textSha256),
+  ],
+);
+
+export type Book = typeof books.$inferSelect;
+export type NewBook = typeof books.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// book_sentences
+// ---------------------------------------------------------------------------
+// Parsed sentence list for each book. Authoritative addressing for reading
+// positions and the TTS request layer. Inserted in bulk on upload.
+
+export const bookSentences = pgTable(
+  "book_sentences",
+  {
+    bookId: uuid("book_id")
+      .references(() => books.id, { onDelete: "cascade" })
+      .notNull(),
+    idx: integer("idx").notNull(),
+    page: integer("page").notNull(),
+    text: text("text").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.bookId, t.idx] }),
+    index("book_sentences_book_id_idx").on(t.bookId),
+  ],
+);
+
+export type BookSentence = typeof bookSentences.$inferSelect;
+export type NewBookSentence = typeof bookSentences.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// reading_positions
+// ---------------------------------------------------------------------------
+// One row per (user, book). Last write wins. Updated on a 1s debounce while
+// playback is running, plus on pause/blur/beforeunload.
+
+export const readingPositions = pgTable(
+  "reading_positions",
+  {
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    bookId: uuid("book_id")
+      .references(() => books.id, { onDelete: "cascade" })
+      .notNull(),
+    sentenceIdx: integer("sentence_idx").notNull(),
+    charOffset: integer("char_offset").default(0).notNull(),
+    updatedAt: nowTz("updated_at"),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.bookId] })],
+);
+
+export type ReadingPosition = typeof readingPositions.$inferSelect;
+export type NewReadingPosition = typeof readingPositions.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// user_settings
+// ---------------------------------------------------------------------------
+
+export const userSettings = pgTable("user_settings", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  voiceId: text("voice_id").default("af_heart").notNull(),
+  speed: real("speed").default(1.0).notNull(),
+  lastBookId: uuid("last_book_id").references(() => books.id, {
+    onDelete: "set null",
+  }),
+  theme: text("theme").default("auto").notNull(),
+  updatedAt: nowTz("updated_at"),
+});
+
+export type UserSettings = typeof userSettings.$inferSelect;
+export type NewUserSettings = typeof userSettings.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// tts_cache
+// ---------------------------------------------------------------------------
+// Content-addressed audio cache. cacheKey = sha256(voiceId|speed|sentenceText).
+// Audio file lives at /var/lib/tts-raizhost/cache/<voice>/<cacheKey>.opus.
+// LRU evicted by lastHitAt in a nightly job.
+
+export const ttsCache = pgTable(
+  "tts_cache",
+  {
+    cacheKey: text("cache_key").primaryKey(),
+    voiceId: text("voice_id").notNull(),
+    textHash: text("text_hash").notNull(),
+    audioPath: text("audio_path").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    bytes: integer("bytes").notNull(),
+    createdAt: nowTz("created_at"),
+    lastHitAt: nowTz("last_hit_at"),
+  },
+  (t) => [
+    index("tts_cache_last_hit_at_idx").on(t.lastHitAt),
+    index("tts_cache_voice_text_idx").on(t.voiceId, t.textHash),
+  ],
+);
+
+export type TtsCache = typeof ttsCache.$inferSelect;
+export type NewTtsCache = typeof ttsCache.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Relations
+// ---------------------------------------------------------------------------
+
+export const usersRelations = relations(users, ({ many, one }) => ({
+  sessions: many(sessions),
+  accounts: many(accounts),
+  enrollmentTokens: many(enrollmentTokens),
+  books: many(books),
+  readingPositions: many(readingPositions),
+  settings: one(userSettings, {
+    fields: [users.id],
+    references: [userSettings.userId],
+  }),
+}));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, {
+    fields: [sessions.userId],
+    references: [users.id],
+  }),
+}));
+
+export const accountsRelations = relations(accounts, ({ one }) => ({
+  user: one(users, {
+    fields: [accounts.userId],
+    references: [users.id],
+  }),
+}));
+
+export const enrollmentTokensRelations = relations(
+  enrollmentTokens,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [enrollmentTokens.userId],
+      references: [users.id],
+    }),
+  }),
+);
+
+export const booksRelations = relations(books, ({ one, many }) => ({
+  user: one(users, {
+    fields: [books.userId],
+    references: [users.id],
+  }),
+  sentences: many(bookSentences),
+  readingPositions: many(readingPositions),
+}));
+
+export const bookSentencesRelations = relations(bookSentences, ({ one }) => ({
+  book: one(books, {
+    fields: [bookSentences.bookId],
+    references: [books.id],
+  }),
+}));
+
+export const readingPositionsRelations = relations(
+  readingPositions,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [readingPositions.userId],
+      references: [users.id],
+    }),
+    book: one(books, {
+      fields: [readingPositions.bookId],
+      references: [books.id],
+    }),
+  }),
+);
+
+export const userSettingsRelations = relations(userSettings, ({ one }) => ({
+  user: one(users, {
+    fields: [userSettings.userId],
+    references: [users.id],
+  }),
+  lastBook: one(books, {
+    fields: [userSettings.lastBookId],
+    references: [books.id],
+  }),
+}));

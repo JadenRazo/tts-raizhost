@@ -1,0 +1,16 @@
+# Keep the build context small — the models bundle is hundreds of MB
+# and is mounted at runtime, never baked into the image.
+models/
+*.onnx
+*.bin
+
+# Python noise
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Local README artifacts
+*.opus
+*.wav
