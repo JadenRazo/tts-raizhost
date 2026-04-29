@@ -350,9 +350,14 @@ export function Reader({
     // failures. Probe the URL once to learn the real cause.
     void fetch(ttsUrl(bookId, currentIdx, voiceId, speed), { method: "GET" })
       .then(async (res) => {
-        if (res.status === 503) {
-          rum.event("audio_error", { kind: "service-warming" });
-          // Service warming — keep intent, schedule a retry of the same idx.
+        // 502/503/504 are all transient: 503 = our route signaling the
+        // synth pod is warming, 502 = Caddy or the route can't reach an
+        // upstream (e.g. tts-web pod restarting during a deploy), 504 =
+        // upstream timeout. Treat them identically — same retry as the
+        // service-warming path, so a deploy doesn't surface as
+        // "Skipping unreadable sentence".
+        if (res.status === 503 || res.status === 502 || res.status === 504) {
+          rum.event("audio_error", { kind: "service-warming", status: res.status });
           setAlert({
             kind: "service-warming",
             retryAt: Date.now() + SERVICE_RETRY_MS,
@@ -875,7 +880,10 @@ export function Reader({
             <select
               value={voiceId}
               onChange={(e) => onVoiceChange(e.target.value)}
-              className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg"
+              // py-1.5 + leading-6: native <select> collapsed state
+              // ignores most line-height rules, but bumping vertical
+              // padding gives the venus/mars descender enough room.
+              className="rounded-md border border-border bg-bg px-2 py-1.5 text-sm leading-6 text-fg"
             >
               {voices.map((v) => (
                 <option key={v.id} value={v.id}>
