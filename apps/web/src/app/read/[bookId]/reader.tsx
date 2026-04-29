@@ -733,6 +733,12 @@ export function Reader({
     // see we want playback. Then try to play() inside the user-gesture
     // window — this is what unblocks iOS autoplay.
     setPlaying(true);
+    // Pressing Play is an explicit "engage with the content" signal,
+    // so jump back to the active sentence immediately rather than
+    // waiting on the idle-aware auto-align. Reset the idle timestamp
+    // so the next 5s-after-scroll grace starts fresh from here.
+    lastUserScrollRef.current = 0;
+    alignNow();
     if (!audio.src) {
       audio.src = ttsUrl(bookId, currentIdx, voiceId, speed);
       audio.load();
@@ -750,7 +756,7 @@ export function Reader({
       }
       // AbortError or others: leave intent set; canplay will retry.
     });
-  }, [bookId, currentIdx, voiceId, speed]);
+  }, [bookId, currentIdx, voiceId, speed, alignNow]);
 
   const goPrev = useCallback(() => {
     setAlert(null);
