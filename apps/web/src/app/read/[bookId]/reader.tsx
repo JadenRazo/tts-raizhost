@@ -429,6 +429,13 @@ export function Reader({
 
   const handleEnded = useCallback(() => {
     rum.event("audio_ended");
+    // Reset highlight state in the same batch as the idx change so the
+    // first render of the new sentence doesn't paint with the previous
+    // sentence's progress (which would briefly highlight the wrong
+    // word). The src-change effect re-resets these too, but it runs
+    // after this commit, leaving a one-frame gap.
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
     setCurrentIdx((idx) => {
       const next = idx + 1;
       if (next >= sentenceCount) {
@@ -760,11 +767,15 @@ export function Reader({
 
   const goPrev = useCallback(() => {
     setAlert(null);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
     setCurrentIdx((idx) => Math.max(0, idx - 1));
   }, []);
 
   const goNext = useCallback(() => {
     setAlert(null);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
     setCurrentIdx((idx) => {
       const next = idx + 1;
       if (next >= sentenceCount) return idx;
@@ -776,6 +787,11 @@ export function Reader({
     (idx: number) => {
       if (idx < 0 || idx >= sentenceCount) return;
       setAlert(null);
+      // Reset the highlight progress in the same React batch as the idx
+      // change so the new sentence's first paint doesn't reuse the old
+      // sentence's audioCurrentTime/Duration and highlight a wrong word.
+      setAudioCurrentTime(0);
+      setAudioDuration(0);
       setCurrentIdx(idx);
       // If user clicks while paused, leave paused; if playing, the src
       // change effect will autoplay.
