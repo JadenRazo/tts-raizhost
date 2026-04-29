@@ -78,7 +78,30 @@ export default async function ReadPage({ params }: PageProps) {
     notFound();
   }
 
-  const [sentenceRows, positionRows, settingsRows, voices] = await Promise.all([
+  // Resolve the saved position first so the initial sentence window
+  // can be centered on it. Without this, a user who left off at idx
+  // 200 would land on a list of [0..49] with no way to render or align
+  // the active sentence — the on-mount auto-align would silently
+  // no-op because idx 200 isn't in the DOM.
+  const positionRows = await db
+    .select({
+      sentenceIdx: schema.readingPositions.sentenceIdx,
+      charOffset: schema.readingPositions.charOffset,
+    })
+    .from(schema.readingPositions)
+    .where(
+      and(
+        eq(schema.readingPositions.userId, userId),
+        eq(schema.readingPositions.bookId, bookId),
+      ),
+    )
+    .limit(1);
+  const initialPosition = positionRows[0] ?? { sentenceIdx: 0, charOffset: 0 };
+  // Pull a few sentences before the saved position so the user has
+  // context above the highlighted sentence when they land.
+  const initialFromIdx = Math.max(0, initialPosition.sentenceIdx - 5);
+
+  const [sentenceRows, settingsRows, voices] = await Promise.all([
     db
       .select({
         idx: schema.bookSentences.idx,
@@ -89,25 +112,11 @@ export default async function ReadPage({ params }: PageProps) {
       .where(
         and(
           eq(schema.bookSentences.bookId, bookId),
-          gte(schema.bookSentences.idx, 0),
+          gte(schema.bookSentences.idx, initialFromIdx),
         ),
       )
       .orderBy(asc(schema.bookSentences.idx))
       .limit(INITIAL_SENTENCE_COUNT),
-
-    db
-      .select({
-        sentenceIdx: schema.readingPositions.sentenceIdx,
-        charOffset: schema.readingPositions.charOffset,
-      })
-      .from(schema.readingPositions)
-      .where(
-        and(
-          eq(schema.readingPositions.userId, userId),
-          eq(schema.readingPositions.bookId, bookId),
-        ),
-      )
-      .limit(1),
 
     db
       .select({
@@ -130,8 +139,7 @@ export default async function ReadPage({ params }: PageProps) {
     .catch((err) => console.error("[reader] lastOpenedAt update failed", err));
 
   const initialSentences: ReaderSentence[] = sentenceRows;
-  const initialPosition = positionRows[0] ?? { sentenceIdx: 0, charOffset: 0 };
-  const settings = settingsRows[0] ?? { voiceId: "en_US-lessac-medium", speed: 1.0 };
+  const settings = settingsRows[0] ?? { voiceId: "af_heart", speed: 1.0 };
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col px-6 py-10">
