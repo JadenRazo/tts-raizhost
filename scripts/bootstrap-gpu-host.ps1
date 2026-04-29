@@ -148,11 +148,21 @@ Write-Ok "NSSM available"
 # -----------------------------------------------------------------------------
 Write-Step "ffmpeg"
 
+# Refresh PATH first so a previously-installed ffmpeg is visible in
+# this fresh shell. Otherwise we hit the install branch and winget
+# replies "already installed, no upgrade" with a non-zero exit code.
+$env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+            [System.Environment]::GetEnvironmentVariable('Path', 'User')
+
 if ($null -eq (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host "    Installing ffmpeg via winget..."
     winget install --id Gyan.FFmpeg --silent --scope machine --accept-source-agreements --accept-package-agreements
-    if ($LASTEXITCODE -ne 0) {
-        Write-Err "winget failed to install ffmpeg. Install manually from ffmpeg.org."
+    # Tolerate the "no applicable upgrade" exit code (-1978335189 /
+    # 0x8A150011): if winget says it's already installed, we just need
+    # the post-install Get-Command check to confirm it's now visible.
+    $wingetOk = ($LASTEXITCODE -eq 0) -or ($LASTEXITCODE -eq -1978335189)
+    if (-not $wingetOk) {
+        Write-Err "winget failed to install ffmpeg (exit $LASTEXITCODE). Install manually from ffmpeg.org."
         exit 1
     }
     $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
