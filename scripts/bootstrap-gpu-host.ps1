@@ -295,9 +295,22 @@ import os
 os.environ['HF_HOME'] = r'$hfHome'
 from kokoro import KPipeline
 print('Downloading Kokoro-82M weights into ' + os.environ['HF_HOME'] + '...')
-p = KPipeline(lang_code='a', repo_id='hexgrad/Kokoro-82M', device='cuda')
-for v in ['af_heart', 'af_bella', 'am_michael', 'am_puck']:
-    p.load_voice(v)
+# Two pipelines: 'a' for American (af_*, am_*), 'b' for British (bf_*).
+# Voice IDs encode the language in their first character, so the wrong
+# pipeline = wrong G2P = wrong vowels.
+pipelines = {
+    'a': KPipeline(lang_code='a', repo_id='hexgrad/Kokoro-82M', device='cuda'),
+    'b': KPipeline(lang_code='b', repo_id='hexgrad/Kokoro-82M', device='cuda'),
+}
+voices = [
+    ('a', 'af_heart'),
+    ('a', 'af_bella'),
+    ('b', 'bf_emma'),
+    ('a', 'am_michael'),
+    ('a', 'am_puck'),
+]
+for code, v in voices:
+    pipelines[code].load_voice(v)
 print('Done.')
 "@
 $prefetchSrc | Set-Content -Path $prefetchPy -Encoding ASCII

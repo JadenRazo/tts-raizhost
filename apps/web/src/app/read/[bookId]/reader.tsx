@@ -99,6 +99,17 @@ function stepSpeed(current: number, dir: -1 | 1): number {
   return SPEED_OPTIONS[next];
 }
 
+// Pretty-print a Kokoro voice for the picker. IDs are
+// `<lang_code><gender>_<name>` (e.g. af_heart, bf_emma); we surface the
+// human name and a gender glyph, which is all the user actually needs
+// to pick.
+function voiceDisplayLabel(v: { id: string; gender: string }): string {
+  const rawName = v.id.split("_").slice(1).join(" ");
+  const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+  const symbol = v.gender === "female" ? "♀" : v.gender === "male" ? "♂" : "";
+  return symbol ? `${name} ${symbol}` : name;
+}
+
 export function Reader({
   bookId,
   sentenceCount,
@@ -868,7 +879,7 @@ export function Reader({
             >
               {voices.map((v) => (
                 <option key={v.id} value={v.id}>
-                  {v.id}
+                  {voiceDisplayLabel(v)}
                 </option>
               ))}
               {voices.find((v) => v.id === voiceId) ? null : (

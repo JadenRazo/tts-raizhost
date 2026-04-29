@@ -69,6 +69,12 @@ VOICE_CATALOG: tuple[_VoiceSpec, ...] = (
         description='Bella (grade A-, warm/expressive)',
     ),
     _VoiceSpec(
+        id='bf_emma',
+        language='British English',
+        gender='female',
+        description='Emma (grade B-, British)',
+    ),
+    _VoiceSpec(
         id='am_michael',
         language='American English',
         gender='male',
@@ -97,9 +103,22 @@ def list_voices() -> list[VoiceInfo]:
     return [VoiceInfo(id=v.id, language=v.language, gender=v.gender) for v in VOICE_CATALOG]
 
 
-_pipeline: 'KPipeline | None' = None
+# One KPipeline per misaki language code. Kokoro shares model weights
+# across pipelines (same hexgrad/Kokoro-82M repo), but each pipeline
+# carries its own G2P (American vs British phonemization) and voice
+# embedding cache. Two pipelines for the current 5 voices: 'a' for
+# af_*/am_*, 'b' for bf_*.
+_pipelines: dict[str, 'KPipeline'] = {}
 _load_lock = threading.Lock()
 _warmed_up = False
+
+
+def _lang_code_for_voice(voice_id: str) -> str:
+    """Kokoro voice IDs encode language in their first character.
+    Map af_*/am_* to 'a' (American English) and bf_*/bm_* to 'b'
+    (British English). Wrong code = wrong phonemization, audible.
+    """
+    return voice_id[:1] if voice_id[:1] in {'a', 'b'} else 'a'
 
 
 def _device() -> str:
@@ -111,11 +130,11 @@ def _dtype_name() -> str:
 
 
 def is_loaded() -> bool:
-    return _pipeline is not None
+    return len(_pipelines) > 0
 
 
 def loaded_voice_count() -> int:
-    return len(ALLOWED_VOICES) if _pipeline is not None else 0
+    return len(ALLOWED_VOICES) if _pipelines else 0
 
 
 _synth_semaphore: 'asyncio.Semaphore | None' = None
@@ -201,12 +220,13 @@ def synth_slot(metrics: dict | None = None) -> _SynthSlot:
 
 
 def _load_blocking() -> None:
-    """Synchronously construct the KPipeline. Called once from the
-    FastAPI startup hook via asyncio.to_thread.
+    """Synchronously construct one KPipeline per language code present
+    in the catalog. Called once from the FastAPI startup hook via
+    asyncio.to_thread.
     """
-    global _pipeline
+    global _pipelines
     with _load_lock:
-        if _pipeline is not None:
+        if _pipelines:
             return
 
         from kokoro import KPipeline  # type: ignore[import-not-found]
@@ -217,26 +237,42 @@ def _load_blocking() -> None:
             log.error('KOKORO_DEVICE=cuda but torch.cuda.is_available()=False; aborting load')
             return
 
-        t0 = time.perf_counter()
-        try:
-            _pipeline = KPipeline(
-                lang_code='a',  # American English, covers all four voices
-                repo_id='hexgrad/Kokoro-82M',
-                device=device,
-            )
-        except Exception as exc:
-            log.exception('kokoro pipeline load failed', extra={'reason': str(exc)})
-            return
+        needed_codes = sorted({_lang_code_for_voice(spec.id) for spec in VOICE_CATALOG})
+        cast_fp16 = device == 'cuda' and _dtype_name() == 'float16'
 
-        # Optional fp16 cast for the model weights. Kokoro is small
-        # enough to fit fp32 in 12 GB easily, but fp16 cuts kernel time
-        # ~30% on Blackwell with no audible quality loss in practice.
-        if device == 'cuda' and _dtype_name() == 'float16' and _pipeline.model is not None:
+        t0 = time.perf_counter()
+        for code in needed_codes:
             try:
-                _pipeline.model = _pipeline.model.to(torch.float16)
-                log.info('kokoro model cast to float16')
+                pipeline = KPipeline(
+                    lang_code=code,
+                    repo_id='hexgrad/Kokoro-82M',
+                    device=device,
+                )
             except Exception as exc:
-                log.warning('fp16 cast failed; staying on fp32', extra={'reason': str(exc)})
+                log.exception(
+                    'kokoro pipeline load failed',
+                    extra={'lang_code': code, 'reason': str(exc)},
+                )
+                continue
+
+            # Optional fp16 cast. Kokoro is small enough to fit fp32 in
+            # 12 GB easily, but fp16 cuts kernel time ~30% on Blackwell
+            # with no audible quality loss in practice.
+            if cast_fp16 and pipeline.model is not None:
+                try:
+                    pipeline.model = pipeline.model.to(torch.float16)
+                    log.info('kokoro model cast to float16', extra={'lang_code': code})
+                except Exception as exc:
+                    log.warning(
+                        'fp16 cast failed; staying on fp32',
+                        extra={'lang_code': code, 'reason': str(exc)},
+                    )
+
+            _pipelines[code] = pipeline
+
+        if not _pipelines:
+            log.error('no kokoro pipelines loaded; service is unusable')
+            return
 
         load_ms = int((time.perf_counter() - t0) * 1000)
         gpu_name = ''
@@ -246,37 +282,47 @@ def _load_blocking() -> None:
             except Exception:
                 pass
         log.info(
-            'kokoro pipeline loaded',
+            'kokoro pipelines loaded',
             extra={
                 'device': device,
                 'dtype': _dtype_name(),
                 'gpu': gpu_name,
                 'sample_rate': KOKORO_SAMPLE_RATE,
                 'load_ms': load_ms,
+                'lang_codes': list(_pipelines.keys()),
                 'voices_advertised': list(ALLOWED_VOICES),
             },
         )
 
         # Warmup synth — runs one short utterance per advertised voice
-        # so each voice's reference embedding is downloaded (lazy
-        # hf_hub_download per-voice) and CUDA kernels are JIT-compiled
-        # before user requests arrive.
+        # against its lang-code pipeline so each voice's reference
+        # embedding is downloaded (lazy hf_hub_download per-voice) and
+        # CUDA kernels are JIT-compiled before user requests arrive.
         for spec in VOICE_CATALOG:
+            code = _lang_code_for_voice(spec.id)
+            pipeline = _pipelines.get(code)
+            if pipeline is None:
+                log.warning(
+                    'kokoro warmup skipped: missing pipeline',
+                    extra={'voice': spec.id, 'lang_code': code},
+                )
+                continue
             try:
                 t1 = time.perf_counter()
-                for _result in _pipeline('Warming up.', voice=spec.id, speed=1.0):
+                for _result in pipeline('Warming up.', voice=spec.id, speed=1.0):
                     pass
                 log.info(
                     'kokoro voice warmed',
                     extra={
                         'voice': spec.id,
+                        'lang_code': code,
                         'warmup_ms': int((time.perf_counter() - t1) * 1000),
                     },
                 )
             except Exception as exc:
                 log.warning(
                     'kokoro warmup failed',
-                    extra={'voice': spec.id, 'reason': str(exc)},
+                    extra={'voice': spec.id, 'lang_code': code, 'reason': str(exc)},
                 )
 
         log.info('kokoro ready', extra={'voices_loaded': len(ALLOWED_VOICES)})
@@ -318,17 +364,19 @@ async def synthesize_stream(text: str, voice: str, speed: float, metrics: dict |
     iteration in asyncio.to_thread so the event loop stays responsive
     while the GPU runs.
     """
-    if _pipeline is None:
-        raise RuntimeError('kokoro pipeline not loaded')
     if voice not in _VOICES_BY_ID:
         raise KeyError(f'voice not in catalog: {voice}')
+
+    pipeline = _pipelines.get(_lang_code_for_voice(voice))
+    if pipeline is None:
+        raise RuntimeError('kokoro pipeline not loaded')
 
     started = time.perf_counter()
     first_pcm_ts: float | None = None
     chunks_yielded = 0
 
     def _iterator():
-        return _pipeline(text, voice=voice, speed=float(speed))
+        return pipeline(text, voice=voice, speed=float(speed))
 
     try:
         gen = await asyncio.to_thread(_iterator)

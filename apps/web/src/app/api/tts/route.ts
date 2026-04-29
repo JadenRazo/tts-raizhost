@@ -63,6 +63,7 @@ const MAX_SPEED = 2.0;
 const ALLOWED_VOICES = new Set<string>([
   "af_heart",   // female, US, Kokoro v1.0 grade A (default)
   "af_bella",   // female, US, Kokoro v1.0 grade A-
+  "bf_emma",    // female, GB, Kokoro v1.0 grade B-
   "am_michael", // male,   US, Kokoro v1.0 grade C+
   "am_puck",    // male,   US, Kokoro v1.0 grade C+
 ]);

@@ -74,6 +74,12 @@ VOICE_CATALOG: tuple[_VoiceSpec, ...] = (
         description='Bella (grade A-, warm/expressive)',
     ),
     _VoiceSpec(
+        id='bf_emma',
+        language='British English',
+        gender='female',
+        description='Emma (grade B-, British)',
+    ),
+    _VoiceSpec(
         id='am_michael',
         language='American English',
         gender='male',
@@ -328,7 +334,7 @@ def _load_blocking() -> None:
         for spec in VOICE_CATALOG:
             try:
                 t1 = time.perf_counter()
-                _ = _kokoro.create('Warming up.', voice=spec.id, speed=1.0, lang='en-us')
+                _ = _kokoro.create('Warming up.', voice=spec.id, speed=1.0, lang=_lang_for_voice(spec.id))
                 log.info(
                     'kokoro voice warmed',
                     extra={
@@ -363,6 +369,23 @@ def voice_sample_rate(voice_id: str) -> int:
 _PCM_CHUNK_SAMPLES = 4096
 
 
+def _lang_for_voice(voice_id: str) -> str:
+    """Map Kokoro voice ID prefix to the espeak-ng locale that
+    kokoro-onnx's `lang` parameter expects.
+
+      af_*, am_*  -> American English ('en-us')
+      bf_*, bm_*  -> British English  ('en-gb')
+
+    Wrong locale = wrong phonemization (af_heart spoken as if it were
+    British, or bf_emma spoken with American vowels). Picking by prefix
+    is the contract used by the upstream Kokoro voice registry.
+    """
+    prefix = voice_id[:1]
+    if prefix == 'b':
+        return 'en-gb'
+    return 'en-us'
+
+
 def _float32_to_int16_bytes(audio: np.ndarray) -> bytes:
     """Float32 PCM in [-1, 1] → little-endian int16 bytes."""
     clipped = np.clip(audio, -1.0, 1.0)
@@ -390,7 +413,7 @@ async def synthesize_stream(text: str, voice: str, speed: float, metrics: dict |
 
     try:
         async for audio_part, sample_rate in _kokoro.create_stream(
-            text, voice=voice, speed=float(speed), lang='en-us',
+            text, voice=voice, speed=float(speed), lang=_lang_for_voice(voice),
         ):
             if audio_part is None or audio_part.size == 0:
                 continue
