@@ -103,14 +103,21 @@ function stepSpeed(current: number, dir: -1 | 1): number {
 
 // Pretty-print a Kokoro voice. IDs are `<lang_code><gender>_<name>`
 // (e.g. af_heart, bf_emma); we surface the human name and a venus or
-// mars symbol. Used for both the native <option> text and our own
-// closed-state overlay.
-function voiceDisplayLabel(v: { id: string; gender: string }): string {
+// mars symbol.
+function voiceDisplayName(v: { id: string }): string {
   const rawName = v.id.split("_").slice(1).join(" ");
-  const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-  const symbol =
-    v.gender === "female" ? "♀" : v.gender === "male" ? "♂" : "";
-  return symbol ? `${name} ${symbol}` : name;
+  return rawName.charAt(0).toUpperCase() + rawName.slice(1);
+}
+
+function voiceDisplaySymbol(v: { gender: string }): string {
+  return v.gender === "female" ? "♀" : v.gender === "male" ? "♂" : "";
+}
+
+// Single-string variant for the inside of <option>, where we can't
+// inject DOM and have to live with the symbol's visual descent.
+function voiceDisplayLabel(v: { id: string; gender: string }): string {
+  const sym = voiceDisplaySymbol(v);
+  return sym ? `${voiceDisplayName(v)} ${sym}` : voiceDisplayName(v);
 }
 
 export function Reader({
@@ -911,13 +918,25 @@ export function Reader({
             */}
             {(() => {
               const selectedVoice = voices.find((x) => x.id === voiceId);
-              const closedLabel = selectedVoice
-                ? voiceDisplayLabel(selectedVoice)
+              const symbol = selectedVoice
+                ? voiceDisplaySymbol(selectedVoice)
+                : "";
+              const name = selectedVoice
+                ? voiceDisplayName(selectedVoice)
                 : voiceId;
               return (
                 <div className="relative inline-flex">
                   <div className="pointer-events-none flex h-9 items-center gap-1 rounded-md border border-border bg-bg pl-3 pr-7 text-sm text-fg">
-                    {closedLabel}
+                    <span>{name}</span>
+                    {symbol ? (
+                      // The venus/mars glyphs sit ~2px below the
+                      // optical center because of their cross/arrow
+                      // descender. Lift the symbol's own span so it
+                      // aligns with the name's visual center.
+                      <span aria-hidden="true" className="-translate-y-[2px]">
+                        {symbol}
+                      </span>
+                    ) : null}
                   </div>
                   <span
                     aria-hidden="true"
