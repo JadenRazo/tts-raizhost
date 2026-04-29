@@ -16,7 +16,14 @@
 // immutable`, so re-playing a sentence is a zero-fetch local replay — the
 // browser HTTP cache hands the bytes back without us doing anything.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { rum } from "@/lib/rum";
 import type { Voice } from "@/lib/tts-client";
@@ -59,6 +66,9 @@ const MAX_PER_IDX_RETRIES = 2;
 // new kokoro synth jobs on every click. The user has to "settle"
 // on a sentence for this long before we warm the next one.
 const PREFETCH_DEBOUNCE_MS = 800;
+// How long the user has to be still (no list scrolling) before the
+// reader auto-aligns the active sentence back to center.
+const IDLE_AUTO_SCROLL_MS = 5_000;
 
 function ttsUrl(
   bookId: string,
@@ -120,6 +130,53 @@ function voiceDisplayLabel(v: { id: string; gender: string }): string {
   return sym ? `${voiceDisplayName(v)} ${sym}` : voiceDisplayName(v);
 }
 
+// Render a sentence with word-level karaoke highlighting. We don't have
+// real per-word timings from Kokoro, so we estimate the spoken position
+// as `progress * wordCount`. This is good enough to give the eye a
+// "you are here / look here next" cue without claiming sub-syllable
+// accuracy.
+//
+// Tokenization preserves whitespace as standalone tokens so the
+// rendered string round-trips exactly (no collapsed spaces around
+// punctuation).
+function renderHighlightedSentence(
+  text: string,
+  progress: number,
+): ReactElement[] {
+  const tokens = text.split(/(\s+)/);
+  const wordPositions: number[] = [];
+  tokens.forEach((tok, i) => {
+    if (tok.trim().length > 0) wordPositions.push(i);
+  });
+  const totalWords = wordPositions.length;
+  if (totalWords === 0) {
+    return [<span key={0}>{text}</span>];
+  }
+  const clamped = Math.max(0, Math.min(1, progress));
+  const currentWord = Math.min(
+    totalWords - 1,
+    Math.floor(clamped * totalWords),
+  );
+
+  return tokens.map((tok, i) => {
+    const wordPos = wordPositions.indexOf(i);
+    if (wordPos === -1) return <span key={i}>{tok}</span>;
+    let cls = "";
+    if (wordPos < currentWord) {
+      cls = "text-subtle";
+    } else if (wordPos === currentWord) {
+      cls = "rounded bg-accent px-0.5 font-medium text-accent-fg";
+    } else if (wordPos === currentWord + 1) {
+      cls = "rounded bg-surface px-0.5 font-medium text-fg";
+    }
+    return (
+      <span key={i} className={cls}>
+        {tok}
+      </span>
+    );
+  });
+}
+
 export function Reader({
   bookId,
   sentenceCount,
@@ -157,6 +214,13 @@ export function Reader({
   const [speed, setSpeed] = useState(clampSpeed(initialSpeed));
   const [alert, setAlert] = useState<AlertState>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Audio progress for word-level highlighting on the active sentence.
+  // We don't have real word timings from Kokoro, so we approximate by
+  // splitting `current_time / duration * word_count`. Close enough for
+  // a "you are here" cue at normal speech rates; doesn't pretend to be
+  // sub-syllable accurate.
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
   // Per-idx retry counter so a single dropped chunk doesn't immediately
   // strand playback. Cleared on idx change.
   const retryCountRef = useRef<Map<number, number>>(new Map());
@@ -247,17 +311,69 @@ export function Reader({
     audio.src = ttsUrl(bookId, currentIdx, voiceId, speed);
     audio.load();
     setAudioReady(false);
+    // Reset word-highlight state — old time/duration shouldn't bleed
+    // into the new sentence's first paint.
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
     // New idx → reset its retry counter (a fresh attempt for a brand-new
     // sentence shouldn't inherit a previous one's strikes).
     retryCountRef.current.delete(currentIdx);
   }, [bookId, currentIdx, voiceId, speed]);
 
-  // Scroll the active sentence into view smoothly.
-  useEffect(() => {
+  // Idle-aware auto-scroll. The active sentence gets centered, but only
+  // if the user hasn't scrolled the list themselves within the last 5s.
+  // This keeps reading-along smooth without yanking the viewport while
+  // the user is actively scrolling to skim ahead or look back.
+  const programmaticScrollRef = useRef(false);
+  const lastUserScrollRef = useRef(0);
+  const autoAlignTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const alignNow = useCallback(() => {
     const el = itemRefs.current.get(currentIdx);
     if (!el) return;
+    programmaticScrollRef.current = true;
     el.scrollIntoView({ block: "center", behavior: "smooth" });
+    // Smooth scroll fires its own scroll events; suppress the handler
+    // for ~800ms so the programmatic scroll doesn't reset the idle
+    // timer and start a feedback loop.
+    setTimeout(() => {
+      programmaticScrollRef.current = false;
+    }, 800);
   }, [currentIdx]);
+
+  useEffect(() => {
+    if (autoAlignTimerRef.current) {
+      clearTimeout(autoAlignTimerRef.current);
+      autoAlignTimerRef.current = null;
+    }
+    const idleMs = Date.now() - lastUserScrollRef.current;
+    if (idleMs >= IDLE_AUTO_SCROLL_MS) {
+      alignNow();
+    } else {
+      autoAlignTimerRef.current = setTimeout(
+        alignNow,
+        IDLE_AUTO_SCROLL_MS - idleMs,
+      );
+    }
+    return () => {
+      if (autoAlignTimerRef.current) clearTimeout(autoAlignTimerRef.current);
+    };
+  }, [currentIdx, alignNow]);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const onScroll = () => {
+      if (programmaticScrollRef.current) return;
+      lastUserScrollRef.current = Date.now();
+      // Re-arm the auto-align timer so it fires 5s after the user
+      // stops scrolling, regardless of whether currentIdx changes.
+      if (autoAlignTimerRef.current) clearTimeout(autoAlignTimerRef.current);
+      autoAlignTimerRef.current = setTimeout(alignNow, IDLE_AUTO_SCROLL_MS);
+    };
+    list.addEventListener("scroll", onScroll, { passive: true });
+    return () => list.removeEventListener("scroll", onScroll);
+  }, [alignNow]);
 
   // Tab-visibility tracker. Hidden tabs don't get prefetch — a friend
   // leaving the reader open in a background tab while audio drains
@@ -372,6 +488,18 @@ export function Reader({
 
   const handleAudioLoadStart = useCallback(() => {
     setAudioReady(false);
+  }, []);
+
+  const handleAudioTimeUpdate = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setAudioCurrentTime(audio.currentTime);
+  }, []);
+
+  const handleAudioMetadata = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (Number.isFinite(audio.duration)) setAudioDuration(audio.duration);
   }, []);
 
   const handleAudioError = useCallback(() => {
@@ -788,6 +916,9 @@ export function Reader({
         onLoadStart={handleAudioLoadStart}
         onStalled={handleAudioStalled}
         onProgress={handleAudioProgress}
+        onTimeUpdate={handleAudioTimeUpdate}
+        onLoadedMetadata={handleAudioMetadata}
+        onDurationChange={handleAudioMetadata}
         preload="auto"
         playsInline
         className="sr-only"
@@ -799,6 +930,12 @@ export function Reader({
       >
         {sentences.map((s) => {
           const isCurrent = s.idx === currentIdx;
+          // Word-level karaoke highlight, scoped to the active
+          // sentence. Other sentences render as plain text.
+          const progress =
+            isCurrent && audioDuration > 0
+              ? audioCurrentTime / audioDuration
+              : 0;
           return (
             <li
               key={s.idx}
@@ -819,7 +956,7 @@ export function Reader({
                 <span className="mr-2 text-xs text-subtle tabular-nums">
                   {s.idx + 1}
                 </span>
-                {s.text}
+                {isCurrent ? renderHighlightedSentence(s.text, progress) : s.text}
               </button>
             </li>
           );
