@@ -101,28 +101,16 @@ function stepSpeed(current: number, dir: -1 | 1): number {
   return SPEED_OPTIONS[next];
 }
 
-// Pretty-print a Kokoro voice for the picker. IDs are
-// `<lang_code><gender>_<name>` (e.g. af_heart, bf_emma); we surface the
-// human name and a gender marker.
-//
-// We use parenthesized letters '(F)' / '(M)' rather than the venus/
-// mars symbols because iOS Safari's native <select> closed-state text
-// rendering clips font glyphs with descenders (the cross under venus,
-// the arrow over mars), and it ignores most CSS height/padding rules
-// — even with appearance-none and emoji-presentation variation
-// selectors, the closed value sits with platform-controlled metrics
-// that clip those symbols. Letters have no descenders and render
-// identically across desktop and every mobile browser.
+// Pretty-print a Kokoro voice. IDs are `<lang_code><gender>_<name>`
+// (e.g. af_heart, bf_emma); we surface the human name and a venus or
+// mars symbol. Used for both the native <option> text and our own
+// closed-state overlay.
 function voiceDisplayLabel(v: { id: string; gender: string }): string {
   const rawName = v.id.split("_").slice(1).join(" ");
   const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-  const marker =
-    v.gender === "female"
-      ? "(F)"
-      : v.gender === "male"
-        ? "(M)"
-        : "";
-  return marker ? `${name} ${marker}` : name;
+  const symbol =
+    v.gender === "female" ? "♀" : v.gender === "male" ? "♂" : "";
+  return symbol ? `${name} ${symbol}` : name;
 }
 
 export function Reader({
@@ -914,35 +902,47 @@ export function Reader({
           <label className="flex items-center gap-2 text-xs text-muted">
             <span>Voice</span>
             {/*
-              `appearance-none` strips the native chrome (which on iOS
-              and Android ignores CSS height/padding and clips the
-              venus/mars descender on the closed state). We then own
-              the height via py-2, and draw our own caret. The native
-              picker still opens on tap because the underlying control
-              is still <select>.
+              Hybrid picker: a real <select> handles all behavior
+              (native picker on mobile, keyboard nav, screen readers),
+              but it's positioned absolutely with opacity:0 over our
+              own styled div. The visible closed-state label is fully
+              under our control, so the venus/mars symbols don't get
+              clipped by iOS Safari's native text-line metrics.
             */}
-            <div className="relative">
-              <select
-                value={voiceId}
-                onChange={(e) => onVoiceChange(e.target.value)}
-                className="appearance-none rounded-md border border-border bg-bg pl-3 pr-7 py-2 text-sm leading-5 text-fg"
-              >
-                {voices.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {voiceDisplayLabel(v)}
-                  </option>
-                ))}
-                {voices.find((v) => v.id === voiceId) ? null : (
-                  <option value={voiceId}>{voiceId}</option>
-                )}
-              </select>
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[0.65rem] text-muted"
-              >
-                ▾
-              </span>
-            </div>
+            {(() => {
+              const selectedVoice = voices.find((x) => x.id === voiceId);
+              const closedLabel = selectedVoice
+                ? voiceDisplayLabel(selectedVoice)
+                : voiceId;
+              return (
+                <div className="relative inline-flex">
+                  <div className="pointer-events-none flex h-9 items-center gap-1 rounded-md border border-border bg-bg pl-3 pr-7 text-sm text-fg">
+                    {closedLabel}
+                  </div>
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[0.65rem] text-muted"
+                  >
+                    ▾
+                  </span>
+                  <select
+                    value={voiceId}
+                    onChange={(e) => onVoiceChange(e.target.value)}
+                    aria-label="Voice"
+                    className="absolute inset-0 h-full w-full cursor-pointer appearance-none border-0 bg-transparent text-sm opacity-0"
+                  >
+                    {voices.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {voiceDisplayLabel(v)}
+                      </option>
+                    ))}
+                    {selectedVoice ? null : (
+                      <option value={voiceId}>{voiceId}</option>
+                    )}
+                  </select>
+                </div>
+              );
+            })()}
           </label>
 
           <label className="flex items-center gap-2 text-xs text-muted">
