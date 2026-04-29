@@ -115,12 +115,17 @@ async def _on_validation_error(_request, exc: ValidationError):  # type: ignore[
 
 
 @app.get('/healthz')
-async def healthz() -> dict[str, Any]:
-    return {
-        'ok': True,
-        'model_loaded': is_loaded(),
+async def healthz() -> Response:
+    # Reflect readiness in the status code so the k8s readiness probe
+    # and the web app's circuit breaker treat a half-up service as
+    # down. 200-headers-then-broken-stream is worse than 503.
+    loaded = is_loaded()
+    body = {
+        'ok': loaded,
+        'model_loaded': loaded,
         'voices_loaded': loaded_voice_count(),
     }
+    return JSONResponse(status_code=200 if loaded else 503, content=body)
 
 
 @app.get('/metrics', include_in_schema=False)
