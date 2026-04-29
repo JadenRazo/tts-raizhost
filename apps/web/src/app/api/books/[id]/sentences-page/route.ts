@@ -8,6 +8,7 @@ import { and, asc, eq, gte } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth/session";
+import { userCanReadBook } from "@/lib/books";
 import { getDb, schema } from "@/lib/db";
 import { sentencesPageDurationSeconds, startTimer } from "@/lib/metrics";
 import { isUuid } from "@/lib/storage";
@@ -58,7 +59,7 @@ export async function GET(req: Request, { params }: RouteContext) {
   const owned = await db
     .select({ id: schema.books.id })
     .from(schema.books)
-    .where(and(eq(schema.books.id, bookId), eq(schema.books.userId, userId)))
+    .where(and(eq(schema.books.id, bookId), userCanReadBook(userId)))
     .limit(1);
   if (owned.length === 0) {
     observe(404);

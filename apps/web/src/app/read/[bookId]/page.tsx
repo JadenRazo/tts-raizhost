@@ -8,6 +8,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { requireAuth } from "@/lib/auth/session";
+import { userCanReadBook } from "@/lib/books";
 import { getDb, schema } from "@/lib/db";
 import { isUuid } from "@/lib/storage";
 import { fetchVoices, KokoroUnreachableError, type Voice } from "@/lib/tts-client";
@@ -71,7 +72,7 @@ export default async function ReadPage({ params }: PageProps) {
       sentenceCount: schema.books.sentenceCount,
     })
     .from(schema.books)
-    .where(and(eq(schema.books.id, bookId), eq(schema.books.userId, userId)))
+    .where(and(eq(schema.books.id, bookId), userCanReadBook(userId)))
     .limit(1);
   const book = bookRows[0];
   if (!book) {

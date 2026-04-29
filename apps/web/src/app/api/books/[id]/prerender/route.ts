@@ -16,23 +16,24 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth/session";
+import { userCanReadBook } from "@/lib/books";
 import { getDb, schema } from "@/lib/db";
 import { isUuid } from "@/lib/storage";
 import { isPrerenderInflight, prerenderBook } from "@/lib/tts-prerender";
+import { ALLOWED_VOICES } from "@/lib/voices";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Keep in sync with services/kokoro/synth.py:VOICE_CATALOG and
-// app/api/tts/route.ts:ALLOWED_VOICES.
-const ALLOWED_VOICES = new Set<string>([
-  "en_US-lessac-medium",
-  "en_US-ryan-medium",
-]);
-
 const bodySchema = z.object({
   voice: z.string().refine((v) => ALLOWED_VOICES.has(v), "Unknown voice"),
-  speed: z.number().min(0.5).max(2.0),
+  // Mirrors apps/web/src/app/api/tts/route.ts:ALLOWED_SPEEDS. A prerender
+  // run at a speed the live path won't accept produces unusable cache
+  // entries, so we keep the validation identical at both edges.
+  speed: z.number().refine(
+    (v) => [0.75, 1.0, 1.25, 1.5].includes(Math.round(v * 100) / 100),
+    "Unsupported speed",
+  ),
 });
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -68,7 +69,7 @@ export async function POST(req: Request, { params }: RouteContext) {
   const owned = await db
     .select({ id: schema.books.id })
     .from(schema.books)
-    .where(and(eq(schema.books.id, bookId), eq(schema.books.userId, session.user.id)))
+    .where(and(eq(schema.books.id, bookId), userCanReadBook(session.user.id)))
     .limit(1);
   if (owned.length === 0) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

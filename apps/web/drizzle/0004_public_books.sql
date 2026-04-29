@@ -1,0 +1,2 @@
+ALTER TABLE "books" ADD COLUMN "is_public" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+CREATE INDEX "books_is_public_idx" ON "books" USING btree ("uploaded_at") WHERE "books"."is_public" = true;

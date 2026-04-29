@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth/session";
+import { userCanReadBook } from "@/lib/books";
 import { getDb, schema } from "@/lib/db";
 import { bookFileSize, isUuid, streamBook } from "@/lib/storage";
 
@@ -35,25 +36,26 @@ export async function GET(_req: Request, { params }: RouteContext) {
   const rows = await db
     .select({
       id: schema.books.id,
+      ownerId: schema.books.userId,
       originalFilename: schema.books.originalFilename,
       byteSize: schema.books.byteSize,
     })
     .from(schema.books)
-    .where(and(eq(schema.books.id, bookId), eq(schema.books.userId, userId)))
+    .where(and(eq(schema.books.id, bookId), userCanReadBook(userId)))
     .limit(1);
   const book = rows[0];
   if (!book) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Confirm the file actually exists on disk before opening the stream;
-  // otherwise the response would 200-then-error mid-flight.
-  const onDiskSize = await bookFileSize(userId, bookId);
+  // The file lives under the book owner's directory — for public books that's
+  // the system user, not the requesting session — so we look it up by owner.
+  const onDiskSize = await bookFileSize(book.ownerId, bookId);
   if (onDiskSize === null) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const stream = streamBook(userId, bookId);
+  const stream = streamBook(book.ownerId, bookId);
   return new Response(stream, {
     status: 200,
     headers: {

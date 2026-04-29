@@ -15,6 +15,27 @@
       "when": 1777426486941,
       "tag": "0001_brief_ikaris",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777481863046,
+      "tag": "0002_invite_codes_and_quota",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777485875329,
+      "tag": "0003_invite_codes_multi_use",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1777487698575,
+      "tag": "0004_public_books",
+      "breakpoints": true
     }
   ]
 }

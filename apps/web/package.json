@@ -7,7 +7,9 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "predev": "node scripts/copy-pdfjs-worker.mjs",
     "dev": "next dev --turbopack",
+    "prebuild": "node scripts/copy-pdfjs-worker.mjs",
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
@@ -16,7 +18,11 @@
     "db:push": "drizzle-kit push",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "create-user": "tsx --env-file=.env scripts/create-user.ts"
+    "create-user": "tsx --env-file=.env scripts/create-user.ts",
+    "issue-invite": "tsx --env-file=.env scripts/issue-invite.ts",
+    "quota-reset": "tsx --env-file=.env scripts/quota-reset.ts",
+    "seed-public-books": "tsx --env-file=.env scripts/seed-public-books.ts",
+    "cleanup-existing-sentences": "tsx --env-file=.env scripts/cleanup-existing-sentences.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4",

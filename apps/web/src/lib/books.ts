@@ -2,13 +2,23 @@
 // per-user 5-book / 50 MB-per-file caps so client and server quote identical
 // numbers. The total per-user cap derives from the two: 5 × 50 MB = 250 MB.
 
-import { eq, sql } from "drizzle-orm";
+import { eq, or, sql, type SQL } from "drizzle-orm";
 import type { Database } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
 
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const MAX_BOOKS_PER_USER = 5;
 export const MAX_TOTAL_BYTES = MAX_FILE_BYTES * MAX_BOOKS_PER_USER;
+
+/** Read-access filter: a user may read books they own or any public book.
+ * Used for sentence/file/position GETs and the reader page. Mutating
+ * endpoints (DELETE, sentence ingest) keep the strict ownership check. */
+export function userCanReadBook(userId: string): SQL {
+  return or(
+    eq(schema.books.userId, userId),
+    eq(schema.books.isPublic, true),
+  )!;
+}
 
 export type LimitErrorCode =
   | "BOOK_LIMIT"

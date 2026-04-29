@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth/session";
+import { userCanReadBook } from "@/lib/books";
 import { getDb, schema } from "@/lib/db";
 import { positionSaveDurationSeconds, startTimer } from "@/lib/metrics";
 import { isUuid } from "@/lib/storage";
@@ -39,7 +40,7 @@ export async function GET(_req: Request, { params }: RouteContext) {
   const owned = await db
     .select({ id: schema.books.id })
     .from(schema.books)
-    .where(and(eq(schema.books.id, bookId), eq(schema.books.userId, userId)))
+    .where(and(eq(schema.books.id, bookId), userCanReadBook(userId)))
     .limit(1);
   if (owned.length === 0) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -112,7 +113,7 @@ export async function PUT(req: Request, { params }: RouteContext) {
         sentenceCount: schema.books.sentenceCount,
       })
       .from(schema.books)
-      .where(and(eq(schema.books.id, bookId), eq(schema.books.userId, userId)))
+      .where(and(eq(schema.books.id, bookId), userCanReadBook(userId)))
       .limit(1);
     if (rows.length === 0) {
       result = "not-found";

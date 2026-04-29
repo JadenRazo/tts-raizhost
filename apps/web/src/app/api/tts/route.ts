@@ -14,6 +14,7 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth/session";
+import { userCanReadBook } from "@/lib/books";
 import { getDb, schema } from "@/lib/db";
 import {
   startTimer,
@@ -47,33 +48,30 @@ import {
   KokoroUnreachableError,
   synthesizeStream,
 } from "@/lib/tts-client";
+import {
+  QuotaExceededError,
+  assertQuota,
+  recordUsage,
+} from "@/lib/tts-quota";
+import { ALLOWED_VOICES, DEFAULT_VOICE } from "@/lib/voices";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_VOICE = "af_heart";
 const DEFAULT_SPEED = 1.0;
 const MAX_IDX = 200_000;
-const MIN_SPEED = 0.5;
-const MAX_SPEED = 2.0;
-
-// Mirrors services/kokoro/synth.py:VOICE_CATALOG. Kept in sync manually —
-// the set changes rarely, and rejecting forged voice IDs at the edge
-// gives users a 400 instead of a 502 bouncing off the synth pod.
-const ALLOWED_VOICES = new Set<string>([
-  "af_heart",   // female, US, Kokoro v1.0 grade A (default)
-  "af_bella",   // female, US, Kokoro v1.0 grade A-
-  "bf_emma",    // female, GB, Kokoro v1.0 grade B-
-  "am_michael", // male,   US, Kokoro v1.0 grade C+
-  "am_puck",    // male,   US, Kokoro v1.0 grade C+
-]);
+// Discrete speed allowlist. Replaces the prior continuous 0.5-2.0 range,
+// which let a single user generate 101 quantized cache-miss combinations
+// per sentence (one per 0.01 step). Collapsing to four buckets caps the
+// per-sentence GPU work the user can force at 4x voice-count.
+const ALLOWED_SPEEDS = new Set<number>([0.75, 1.0, 1.25, 1.5]);
 
 function parseSpeedParam(raw: string | null): number | null {
   if (raw === null) return null;
   const n = Number(raw);
   if (!Number.isFinite(n)) return null;
-  if (n < MIN_SPEED || n > MAX_SPEED) return null;
-  return Math.round(n * 100) / 100;
+  const quantized = Math.round(n * 100) / 100;
+  return ALLOWED_SPEEDS.has(quantized) ? quantized : null;
 }
 
 function audioHeaders(
@@ -175,18 +173,6 @@ export async function GET(req: Request) {
 
   const db = getDb();
 
-  const owned = await db
-    .select({ id: schema.books.id })
-    .from(schema.books)
-    .where(and(eq(schema.books.id, bookId), eq(schema.books.userId, userId)))
-    .limit(1);
-  if (owned.length === 0) {
-    ttsRequestDurationSeconds
-      .labels({ cache: "miss", voice: voiceParam ?? "unknown", status: "404" })
-      .observe(elapsed());
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
   let voiceId: string;
   let speed: number;
   let settingsSource: "url" | "settings";
@@ -228,13 +214,19 @@ export async function GET(req: Request) {
     source: settingsSource,
   });
 
+  // Single round-trip: confirm read access to the book AND fetch the
+  // sentence text. Three-condition WHERE on the JOIN means a forged
+  // bookId not visible to the user, OR a missing sentence idx, both
+  // surface as 404 — the response shape doesn't reveal which.
   const sentenceRows = await db
     .select({ text: schema.bookSentences.text })
     .from(schema.bookSentences)
+    .innerJoin(schema.books, eq(schema.books.id, schema.bookSentences.bookId))
     .where(
       and(
         eq(schema.bookSentences.bookId, bookId),
         eq(schema.bookSentences.idx, idx),
+        userCanReadBook(userId),
       ),
     )
     .limit(1);
@@ -242,7 +234,7 @@ export async function GET(req: Request) {
     ttsRequestDurationSeconds
       .labels({ cache: "miss", voice: voiceId, status: "404" })
       .observe(elapsed());
-    return NextResponse.json({ error: "Sentence not found" }, { status: 404 });
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const sentenceText = sentenceRows[0].text;
 
@@ -273,6 +265,40 @@ export async function GET(req: Request) {
       audioPath: hit.audioPath,
     });
   }
+
+  // Cache miss: charge the user's daily synthesis quota before we
+  // commit to GPU time. A 429 here is the only place where a logged-in
+  // user can be told "too many synth requests today" — it bubbles into
+  // the reader's audio_error path and the user sees a friendly stall.
+  try {
+    await assertQuota(db, userId, sentenceText.length);
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      ttsRequestDurationSeconds
+        .labels({ cache: "miss", voice: voiceId, status: "429" })
+        .observe(elapsed());
+      return NextResponse.json(
+        { error: err.message, used: err.used, limit: err.limit },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": "3600",
+            "X-Quota-Used": String(err.used),
+            "X-Quota-Limit": String(err.limit),
+          },
+        },
+      );
+    }
+    throw err;
+  }
+
+  // Record usage at commit time (before synth) so a connection drop
+  // mid-synth still counts toward the daily cap — GPU time was spent
+  // either way. Fire-and-forget; over-shooting by one synth on a DB
+  // hiccup is preferable to blocking the synth on a quota write.
+  void recordUsage(db, userId, sentenceText.length).catch((err) =>
+    console.error("[tts] recordUsage failed", err),
+  );
 
   // Cache miss: synthesize via the active backend. The selector picks
   // gpu (home box over Tailscale) or cpu (in-cluster pod); on a

@@ -13,6 +13,9 @@ type Props = {
   author: string | null;
   pageCount: number;
   uploadedAt: string;
+  /** Featured (public) books — hide the Delete affordance and the
+   * "uploaded N ago" suffix since neither applies to a curated row. */
+  readOnly?: boolean;
 };
 
 const RELATIVE_THRESHOLDS: { limit: number; divisor: number; unit: Intl.RelativeTimeFormatUnit }[] = [
@@ -37,7 +40,14 @@ function formatRelative(iso: string): string {
   return rtf.format(Math.round(seconds / (60 * 60 * 24 * 365)), "year");
 }
 
-export function BookRow({ id, title, author, pageCount, uploadedAt }: Props) {
+export function BookRow({
+  id,
+  title,
+  author,
+  pageCount,
+  uploadedAt,
+  readOnly = false,
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [deleting, setDeleting] = useState(false);
@@ -83,10 +93,15 @@ export function BookRow({ id, title, author, pageCount, uploadedAt }: Props) {
         </p>
         <p className="mt-1 truncate text-sm text-muted">
           {author ? `${author} · ` : ""}
-          {pageCount} {pageCount === 1 ? "page" : "pages"} ·{" "}
-          <span className="text-subtle">
-            uploaded {formatRelative(uploadedAt)}
-          </span>
+          {pageCount} {pageCount === 1 ? "page" : "pages"}
+          {readOnly ? null : (
+            <>
+              {" · "}
+              <span className="text-subtle">
+                uploaded {formatRelative(uploadedAt)}
+              </span>
+            </>
+          )}
         </p>
         {error ? (
           <p role="alert" className="mt-1 text-xs text-danger">
@@ -94,14 +109,16 @@ export function BookRow({ id, title, author, pageCount, uploadedAt }: Props) {
           </p>
         ) : null}
       </Link>
-      <button
-        type="button"
-        onClick={onDelete}
-        disabled={busy}
-        className="text-xs text-subtle underline-offset-4 hover:text-danger hover:underline disabled:opacity-50"
-      >
-        {busy ? "Deleting…" : "Delete"}
-      </button>
+      {readOnly ? null : (
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={busy}
+          className="text-xs text-subtle underline-offset-4 hover:text-danger hover:underline disabled:opacity-50"
+        >
+          {busy ? "Deleting…" : "Delete"}
+        </button>
+      )}
     </div>
   );
 }

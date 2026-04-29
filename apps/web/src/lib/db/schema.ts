@@ -170,6 +170,68 @@ export type EnrollmentToken = typeof enrollmentTokens.$inferSelect;
 export type NewEnrollmentToken = typeof enrollmentTokens.$inferInsert;
 
 // ---------------------------------------------------------------------------
+// invite_codes
+// ---------------------------------------------------------------------------
+// Codes minted by `scripts/issue-invite.ts` and consumed at signup. The
+// friend-tier beta gate: signup is rejected unless a valid code is
+// presented and it still has remaining uses. A CHECK constraint
+// guarantees use_count <= max_uses even under concurrent UPDATEs, so a
+// code never gets over-redeemed.
+//
+// max_uses=1 is single-use (the default; `consumed_at` becomes the use
+// timestamp). max_uses>1 is a shareable link — `consumed_at`,
+// `consumed_by_email`, `consumed_by_user_id` record only the FIRST
+// consumer; the full audit trail comes from the users table filtered
+// by created_at within the issued_at window.
+
+export const inviteCodes = pgTable(
+  "invite_codes",
+  {
+    code: text("code").primaryKey(),
+    issuedAt: nowTz("issued_at"),
+    issuedBy: text("issued_by"),
+    maxUses: integer("max_uses").notNull().default(1),
+    useCount: integer("use_count").notNull().default(0),
+    consumedAt: tz("consumed_at"),
+    consumedByEmail: text("consumed_by_email"),
+    consumedByUserId: uuid("consumed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    notes: text("notes"),
+  },
+  (t) => [
+    index("invite_codes_available_idx")
+      .on(t.code)
+      .where(sql`${t.useCount} < ${t.maxUses}`),
+  ],
+);
+
+export type InviteCode = typeof inviteCodes.$inferSelect;
+export type NewInviteCode = typeof inviteCodes.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// user_tts_quota
+// ---------------------------------------------------------------------------
+// Per-user daily synthesis quota in characters. Counts only cache-miss
+// requests (cache hits cost no GPU time). Reset daily at 00:00 UTC by
+// the tts-quota-reset CronJob; lifetime usage is preserved.
+
+export const userTtsQuota = pgTable("user_tts_quota", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  charsUsedToday: integer("chars_used_today").notNull().default(0),
+  dailyLimit: integer("daily_limit").notNull().default(200_000),
+  lastResetAt: nowTz("last_reset_at"),
+  totalCharsLifetime: bigint("total_chars_lifetime", { mode: "number" })
+    .notNull()
+    .default(0),
+});
+
+export type UserTtsQuota = typeof userTtsQuota.$inferSelect;
+export type NewUserTtsQuota = typeof userTtsQuota.$inferInsert;
+
+// ---------------------------------------------------------------------------
 // books
 // ---------------------------------------------------------------------------
 // Library of uploaded PDFs. The blob lives on disk at
@@ -192,6 +254,10 @@ export const books = pgTable(
     /** sha256 of the normalized extracted text — used for cache invalidation
      * when the same book is re-uploaded with the same content. */
     textSha256: text("text_sha256").notNull(),
+    /** Curated public-domain books available to every signed-in user.
+     * Owned by a fixed system user (see scripts/seed-public-books.ts);
+     * excluded from per-user storage caps and from the Delete affordance. */
+    isPublic: boolean("is_public").default(false).notNull(),
     uploadedAt: nowTz("uploaded_at"),
     lastOpenedAt: tz("last_opened_at"),
   },
@@ -201,6 +267,7 @@ export const books = pgTable(
       sql`${t.lastOpenedAt} desc nulls last`,
     ),
     index("books_text_sha256_idx").on(t.textSha256),
+    index("books_is_public_idx").on(t.uploadedAt).where(sql`${t.isPublic} = true`),
   ],
 );
 
@@ -318,6 +385,24 @@ export const usersRelations = relations(users, ({ many, one }) => ({
   settings: one(userSettings, {
     fields: [users.id],
     references: [userSettings.userId],
+  }),
+  ttsQuota: one(userTtsQuota, {
+    fields: [users.id],
+    references: [userTtsQuota.userId],
+  }),
+}));
+
+export const inviteCodesRelations = relations(inviteCodes, ({ one }) => ({
+  consumedBy: one(users, {
+    fields: [inviteCodes.consumedByUserId],
+    references: [users.id],
+  }),
+}));
+
+export const userTtsQuotaRelations = relations(userTtsQuota, ({ one }) => ({
+  user: one(users, {
+    fields: [userTtsQuota.userId],
+    references: [users.id],
   }),
 }));
 
