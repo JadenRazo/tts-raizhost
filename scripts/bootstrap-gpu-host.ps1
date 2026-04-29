@@ -196,36 +196,38 @@ if ($LASTEXITCODE -ne 0) {
 
 # Verify CUDA actually works on this card. Blackwell (RTX 5070, sm_120)
 # silently falls back to CPU on too-old PyTorch. Run a real op.
-$cudaCheck = & $venvPython -c @'
+#
+# We write the check to a temp .py file rather than using `python -c
+# <heredoc>` because PowerShell 5.1 strips embedded double quotes when
+# invoking native exes, which mangles `device="cuda"` into `device=cuda`
+# and produces a NameError. Reading from a file sidesteps the parser.
+$cudaCheckPy = Join-Path $env:TEMP "tts-cuda-check-$PID.py"
+@'
 import torch, sys
 ok = (
     torch.cuda.is_available()
-    and torch.zeros(1, device="cuda").add(1).sum().item() == 1.0
+    and torch.zeros(1, device='cuda').add(1).sum().item() == 1.0
 )
-print("CUDA_OK" if ok else "CUDA_BROKEN")
-print("torch", torch.__version__, "cuda", torch.version.cuda)
+print('CUDA_OK' if ok else 'CUDA_BROKEN')
+print('torch', torch.__version__, 'cuda', torch.version.cuda)
 sys.exit(0 if ok else 2)
-'@
-if ($LASTEXITCODE -ne 0) {
+'@ | Set-Content -Path $cudaCheckPy -Encoding ASCII
+
+$cudaCheck = & $venvPython $cudaCheckPy
+$cudaExit  = $LASTEXITCODE
+if ($cudaExit -ne 0) {
     Write-Warn "CUDA op failed on stable wheel. Falling back to nightly..."
     & $venvPip install --pre --upgrade --index-url $cuIndexNightly torch
     if ($LASTEXITCODE -ne 0) { Write-Err "Nightly install failed."; exit 1 }
 
-    $cudaCheck = & $venvPython -c @'
-import torch, sys
-ok = (
-    torch.cuda.is_available()
-    and torch.zeros(1, device="cuda").add(1).sum().item() == 1.0
-)
-print("CUDA_OK" if ok else "CUDA_BROKEN")
-print("torch", torch.__version__, "cuda", torch.version.cuda)
-sys.exit(0 if ok else 2)
-'@
+    $cudaCheck = & $venvPython $cudaCheckPy
     if ($LASTEXITCODE -ne 0) {
+        Remove-Item $cudaCheckPy -Force -ErrorAction SilentlyContinue
         Write-Err "CUDA still broken after nightly install. GPU may need a newer driver."
         exit 1
     }
 }
+Remove-Item $cudaCheckPy -Force -ErrorAction SilentlyContinue
 Write-Ok "PyTorch CUDA verified working"
 $cudaCheck | ForEach-Object { Write-Host "       $_" }
 
@@ -260,18 +262,24 @@ Write-Ok "Created $dataDir"
 Write-Step "Pre-caching Kokoro-82M weights"
 
 $env:HF_HOME = $hfHome
-& $venvPython -c @"
+# Same temp-file pattern as the CUDA check: dodge PowerShell quote
+# stripping on native-exe invocations.
+$prefetchPy = Join-Path $env:TEMP "tts-kokoro-prefetch-$PID.py"
+$prefetchSrc = @"
 import os
 os.environ['HF_HOME'] = r'$hfHome'
 from kokoro import KPipeline
-print('Downloading Kokoro-82M weights into $hfHome...')
+print('Downloading Kokoro-82M weights into ' + os.environ['HF_HOME'] + '...')
 p = KPipeline(lang_code='a', repo_id='hexgrad/Kokoro-82M', device='cuda')
-# Touch each voice so its embedding lands in the cache.
 for v in ['af_heart', 'af_bella', 'am_michael', 'am_puck']:
     p.load_voice(v)
 print('Done.')
 "@
-if ($LASTEXITCODE -ne 0) { Write-Err "Kokoro pre-cache failed."; exit 1 }
+$prefetchSrc | Set-Content -Path $prefetchPy -Encoding ASCII
+& $venvPython $prefetchPy
+$prefetchExit = $LASTEXITCODE
+Remove-Item $prefetchPy -Force -ErrorAction SilentlyContinue
+if ($prefetchExit -ne 0) { Write-Err "Kokoro pre-cache failed."; exit 1 }
 Write-Ok "Kokoro weights cached"
 
 # -----------------------------------------------------------------------------
