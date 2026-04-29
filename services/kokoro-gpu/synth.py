@@ -329,7 +329,7 @@ def _load_blocking() -> None:
 
 
 async def warmup() -> None:
-    if _pipeline is None:
+    if not _pipelines:
         await asyncio.to_thread(_load_blocking)
 
 
