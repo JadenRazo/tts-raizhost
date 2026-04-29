@@ -144,6 +144,31 @@ if ($null -eq (Get-Command nssm -ErrorAction SilentlyContinue)) {
 Write-Ok "NSSM available"
 
 # -----------------------------------------------------------------------------
+# 2b. ffmpeg (libopus encoder for the PCM -> Opus pipeline in encode.py)
+# -----------------------------------------------------------------------------
+Write-Step "ffmpeg"
+
+if ($null -eq (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Host "    Installing ffmpeg via winget..."
+    winget install --id Gyan.FFmpeg --silent --scope machine --accept-source-agreements --accept-package-agreements
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "winget failed to install ffmpeg. Install manually from ffmpeg.org."
+        exit 1
+    }
+    $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+                [System.Environment]::GetEnvironmentVariable('Path', 'User')
+}
+if ($null -eq (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Err "ffmpeg still not on PATH after install. Open a new shell and re-run."
+    exit 1
+}
+# Capture the directory so we can pin it on the service env (NSSM
+# captures PATH at install time; explicit AppEnvironmentExtra is safer).
+$ffmpegExe = (Get-Command ffmpeg).Source
+$ffmpegDir = Split-Path -Parent $ffmpegExe
+Write-Ok "ffmpeg available at $ffmpegExe"
+
+# -----------------------------------------------------------------------------
 # 3. Tailscale presence check (warning only - install is owned by user)
 # -----------------------------------------------------------------------------
 Write-Step "Tailscale"
@@ -347,13 +372,18 @@ nssm set     $svcName AppRotateBytes 10485760 | Out-Null
 nssm set     $svcName AppThrottle   5000 | Out-Null
 nssm set     $svcName AppExit Default Restart | Out-Null
 nssm set     $svcName AppRestartDelay 2000 | Out-Null
+# Pin ffmpeg's directory at the front of PATH so encode.py's
+# subprocess.create_subprocess_exec('ffmpeg', ...) finds it without
+# relying on the inherited NSSM-captured PATH.
+$svcPath = "$ffmpegDir;$env:Path"
 nssm set     $svcName AppEnvironmentExtra `
     "HF_HOME=$hfHome" `
     "KOKORO_DEVICE=cuda" `
     "KOKORO_DTYPE=float32" `
     "KOKORO_MAX_CONCURRENT_SYNTH=1" `
     "KOKORO_QUEUE_TIMEOUT_MS=200" `
-    "PYTHONUNBUFFERED=1" | Out-Null
+    "PYTHONUNBUFFERED=1" `
+    "PATH=$svcPath" | Out-Null
 
 Write-Ok "Service $svcName registered"
 
