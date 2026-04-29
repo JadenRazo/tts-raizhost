@@ -103,10 +103,23 @@ function stepSpeed(current: number, dir: -1 | 1): number {
 // `<lang_code><gender>_<name>` (e.g. af_heart, bf_emma); we surface the
 // human name and a gender glyph, which is all the user actually needs
 // to pick.
+//
+// The U+FE0F variation selector forces emoji presentation on the
+// venus/mars symbols. Native <select> on iOS Safari and Android Chrome
+// paint the closed state with browser chrome that clips font glyphs
+// with descenders (the cross under venus, the arrow over mars), and
+// they ignore most CSS height/padding rules. Emoji presentation
+// renders as a fixed-height inline image instead, so it sits cleanly
+// inside the control on every platform.
 function voiceDisplayLabel(v: { id: string; gender: string }): string {
   const rawName = v.id.split("_").slice(1).join(" ");
   const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-  const symbol = v.gender === "female" ? "♀" : v.gender === "male" ? "♂" : "";
+  const symbol =
+    v.gender === "female"
+      ? "♀️"
+      : v.gender === "male"
+        ? "♂️"
+        : "";
   return symbol ? `${name} ${symbol}` : name;
 }
 
