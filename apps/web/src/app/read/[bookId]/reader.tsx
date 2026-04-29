@@ -929,11 +929,11 @@ export function Reader({
                   <div className="pointer-events-none flex h-9 items-center gap-1 rounded-md border border-border bg-bg pl-3 pr-7 text-sm text-fg">
                     <span>{name}</span>
                     {symbol ? (
-                      // The venus/mars glyphs sit ~2px below the
+                      // The venus/mars glyphs sit ~4px below the
                       // optical center because of their cross/arrow
                       // descender. Lift the symbol's own span so it
                       // aligns with the name's visual center.
-                      <span aria-hidden="true" className="-translate-y-[2px]">
+                      <span aria-hidden="true" className="-translate-y-[4px]">
                         {symbol}
                       </span>
                     ) : null}
