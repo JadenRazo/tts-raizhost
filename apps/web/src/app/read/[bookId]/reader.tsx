@@ -103,26 +103,26 @@ function stepSpeed(current: number, dir: -1 | 1): number {
 
 // Pretty-print a Kokoro voice for the picker. IDs are
 // `<lang_code><gender>_<name>` (e.g. af_heart, bf_emma); we surface the
-// human name and a gender glyph, which is all the user actually needs
-// to pick.
+// human name and a gender marker.
 //
-// The U+FE0F variation selector forces emoji presentation on the
-// venus/mars symbols. Native <select> on iOS Safari and Android Chrome
-// paint the closed state with browser chrome that clips font glyphs
-// with descenders (the cross under venus, the arrow over mars), and
-// they ignore most CSS height/padding rules. Emoji presentation
-// renders as a fixed-height inline image instead, so it sits cleanly
-// inside the control on every platform.
+// We use parenthesized letters '(F)' / '(M)' rather than the venus/
+// mars symbols because iOS Safari's native <select> closed-state text
+// rendering clips font glyphs with descenders (the cross under venus,
+// the arrow over mars), and it ignores most CSS height/padding rules
+// — even with appearance-none and emoji-presentation variation
+// selectors, the closed value sits with platform-controlled metrics
+// that clip those symbols. Letters have no descenders and render
+// identically across desktop and every mobile browser.
 function voiceDisplayLabel(v: { id: string; gender: string }): string {
   const rawName = v.id.split("_").slice(1).join(" ");
   const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
-  const symbol =
+  const marker =
     v.gender === "female"
-      ? "♀️"
+      ? "(F)"
       : v.gender === "male"
-        ? "♂️"
+        ? "(M)"
         : "";
-  return symbol ? `${name} ${symbol}` : name;
+  return marker ? `${name} ${marker}` : name;
 }
 
 export function Reader({
