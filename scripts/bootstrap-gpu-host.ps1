@@ -1,10 +1,10 @@
-# bootstrap-gpu-host.ps1 — one-shot Windows installer for tts-kokoro-gpu.
+# bootstrap-gpu-host.ps1 - one-shot Windows installer for tts-kokoro-gpu.
 #
 # Run as Administrator from the repo root:
 #   powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-gpu-host.ps1
 #
-# What it does (idempotent — safe to re-run):
-#   1.  Verifies Administrator privileges, GPU presence, and ≥10 GiB free disk.
+# What it does (idempotent - safe to re-run):
+#   1.  Verifies Administrator privileges, GPU presence, and >=10 GiB free disk.
 #   2.  Installs Python 3.11 via winget (skipped if already installed).
 #   3.  Installs NSSM via winget (skipped if already installed).
 #   4.  Verifies Tailscale is installed (warns if not).
@@ -56,12 +56,12 @@ try {
     exit 1
 }
 
-# Free disk space — torch cu128 wheel is ~2.5 GB, model weights ~360 MB,
+# Free disk space - torch cu128 wheel is ~2.5 GB, model weights ~360 MB,
 # headroom for venv + cache. Refuse to install on <10 GiB free.
 $freeBytes = (Get-PSDrive -Name C).Free
 $freeGiB = [math]::Round($freeBytes / 1GB, 1)
 if ($freeGiB -lt 10) {
-    Write-Err "Only $freeGiB GiB free on C:\. Need ≥10 GiB."
+    Write-Err "Only $freeGiB GiB free on C:\. Need >=10 GiB."
     exit 1
 }
 Write-Ok "Disk free on C:\: $freeGiB GiB"
@@ -70,7 +70,7 @@ Write-Ok "Disk free on C:\: $freeGiB GiB"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $gpuDir   = Join-Path $repoRoot 'services\kokoro-gpu'
 if (-not (Test-Path $gpuDir)) {
-    Write-Err "Expected services\kokoro-gpu under $repoRoot — wrong directory?"
+    Write-Err "Expected services\kokoro-gpu under $repoRoot - wrong directory?"
     exit 1
 }
 Write-Ok "Repo root: $repoRoot"
@@ -144,7 +144,7 @@ if ($null -eq (Get-Command nssm -ErrorAction SilentlyContinue)) {
 Write-Ok "NSSM available"
 
 # -----------------------------------------------------------------------------
-# 3. Tailscale presence check (warning only — install is owned by user)
+# 3. Tailscale presence check (warning only - install is owned by user)
 # -----------------------------------------------------------------------------
 Write-Step "Tailscale"
 
@@ -280,7 +280,7 @@ Write-Ok "Kokoro weights cached"
 Write-Step "Windows Firewall rules"
 
 # Rule 1: allow inbound TCP 8000 on the Tailscale interface (alias usually
-# 'Tailscale' but some installs name it 'tailscale0' — we look it up).
+# 'Tailscale' but some installs name it 'tailscale0' - we look it up).
 $tsAdapter = Get-NetAdapter | Where-Object {
     $_.InterfaceAlias -match '^Tailscale' -or $_.InterfaceDescription -match 'Tailscale'
 } | Select-Object -First 1
@@ -366,7 +366,7 @@ if ($svc.Status -ne 'Running') {
     exit 1
 }
 
-# Health check — model load is async on startup, so we poll for up to 60s.
+# Health check - model load is async on startup, so we poll for up to 60s.
 $healthOk = $false
 for ($i = 0; $i -lt 30; $i++) {
     try {
