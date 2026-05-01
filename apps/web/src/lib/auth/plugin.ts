@@ -131,6 +131,7 @@ export const totpPrimary = (): BetterAuthPlugin => ({
         method: "POST",
         body: z.object({
           email: z.string().min(1).max(254),
+          inviteCode: z.string().min(1).max(64),
         }),
       },
       async (ctx) => {
@@ -160,6 +161,13 @@ export const totpPrimary = (): BetterAuthPlugin => ({
         }
         const email = validated;
 
+        const inviteCode = ctx.body.inviteCode.trim();
+        if (!inviteCode) {
+          throw new APIError("BAD_REQUEST", {
+            message: "Invite code is required.",
+          });
+        }
+
         const db = getDb();
 
         // Case-insensitive uniqueness check; the unique index on lower(email)
@@ -181,6 +189,31 @@ export const totpPrimary = (): BetterAuthPlugin => ({
 
         try {
           await db.transaction(async (tx) => {
+            // Consume the invite code atomically with user-create.
+            // WHERE use_count < max_uses gates redemption; the CHECK
+            // constraint on (use_count <= max_uses) protects against a
+            // concurrent UPDATE racing past the bound. consumed_*
+            // fields are populated only on the FIRST consumer of a
+            // multi-use code (COALESCE), so single-use codes keep
+            // their existing semantics.
+            const consumed = await tx
+              .update(schema.inviteCodes)
+              .set({
+                useCount: sql`${schema.inviteCodes.useCount} + 1`,
+                consumedAt: sql`COALESCE(${schema.inviteCodes.consumedAt}, now())`,
+                consumedByEmail: sql`COALESCE(${schema.inviteCodes.consumedByEmail}, ${email})`,
+              })
+              .where(
+                sql`${schema.inviteCodes.code} = ${inviteCode} AND ${schema.inviteCodes.useCount} < ${schema.inviteCodes.maxUses}`,
+              )
+              .returning({ code: schema.inviteCodes.code });
+
+            if (consumed.length === 0) {
+              throw new APIError("FORBIDDEN", {
+                message: "Invite code is invalid or has no remaining uses.",
+              });
+            }
+
             const [created] = await tx
               .insert(schema.users)
               .values({
@@ -197,6 +230,16 @@ export const totpPrimary = (): BetterAuthPlugin => ({
               });
             }
 
+            // Pin the first consumer's user_id only — leaves later
+            // multi-use redemptions discoverable via the users table
+            // by created_at.
+            await tx
+              .update(schema.inviteCodes)
+              .set({
+                consumedByUserId: sql`COALESCE(${schema.inviteCodes.consumedByUserId}, ${created.id})`,
+              })
+              .where(eq(schema.inviteCodes.code, inviteCode));
+
             await tx.insert(schema.enrollmentTokens).values({
               token,
               userId: created.id,
@@ -204,6 +247,9 @@ export const totpPrimary = (): BetterAuthPlugin => ({
             });
           });
         } catch (e) {
+          // Re-throw API errors verbatim so the FORBIDDEN from invite
+          // consumption surfaces with its own status/message.
+          if (e instanceof APIError) throw e;
           // A racing INSERT could trip the unique index after our pre-check.
           if (
             e instanceof Error &&

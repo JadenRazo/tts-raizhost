@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 
-export function SignupForm() {
+export function SignupForm({ inviteCode }: { inviteCode: string }) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -15,7 +15,7 @@ export function SignupForm() {
       const res = await fetch("/api/auth/sign-up", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, inviteCode }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as
