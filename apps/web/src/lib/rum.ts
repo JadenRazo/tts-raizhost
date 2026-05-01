@@ -19,6 +19,8 @@
 // unknown names are dropped silently. Attribute keys/values are bounded
 // in size.
 
+import { getCurrentTraceContext } from "./trace-context";
+
 const QUEUE_MAX = 50;
 const FLUSH_THRESHOLD = 10;
 const FLUSH_INTERVAL_MS = 5_000;
@@ -135,10 +137,17 @@ function sanitizeAttrs(attrs: Attrs | undefined): Attrs | undefined {
 function event(name: string, attrs?: Attrs): void {
   const state = getState();
   if (!state) return;
+  // Stamp the active W3C trace context so every event a dashboard
+  // shows can be drilled into Tempo by trace_id. We log this only —
+  // server-side keeps it out of Prometheus labels (cardinality).
+  const trace = getCurrentTraceContext();
+  const merged: Attrs | undefined = trace
+    ? { ...(attrs ?? {}), trace_id: trace.traceId, span_id: trace.spanId }
+    : attrs;
   enqueue(state, {
     name,
     ts: Date.now(),
-    attrs: sanitizeAttrs(attrs),
+    attrs: sanitizeAttrs(merged),
   });
 }
 
@@ -180,13 +189,70 @@ type WebVitalMetric = {
   rating?: string;
 };
 
-function vital(metric: WebVitalMetric): void {
+function vital(metric: WebVitalMetric, route?: string): void {
   event("web_vital", {
     metric: metric.name,
     value: Math.round(metric.value * 1000) / 1000,
     rating: metric.rating ?? "unknown",
+    route: route ?? "unknown",
   });
 }
 
-export const rum = { event, timing, vital };
+// Stack trace fingerprint. We don't ship raw stacks to the server (PII
+// risk in URL paths, line numbers shift across builds anyway) — instead
+// we hash the *shape* and send a 16-hex token the dashboard can group on.
+function stackFingerprint(stack: string | undefined): string {
+  if (!stack) return "no-stack";
+  // Keep only function names + file basenames; drop line/col/origin.
+  const normalized = stack
+    .split("\n")
+    .slice(0, 8)
+    .map((l) => l.replace(/https?:\/\/[^)]+/g, "").replace(/:\d+:\d+/g, ""))
+    .join("\n");
+  // Tiny non-crypto hash — purpose is grouping, not security.
+  let h = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    h = (h * 31 + normalized.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+const KNOWN_ERROR_CLASSES = new Set([
+  "TypeError",
+  "ReferenceError",
+  "SyntaxError",
+  "RangeError",
+  "URIError",
+  "AbortError",
+  "NetworkError",
+  "Error",
+]);
+
+function classify(name: string | undefined): string {
+  if (!name) return "Other";
+  return KNOWN_ERROR_CLASSES.has(name) ? name : "Other";
+}
+
+// Manual error report. Used by the layout-level window.error /
+// unhandledrejection listeners and by React error boundaries.
+//
+// Sanitization: bounded message length, fingerprint instead of raw
+// stack, error_class restricted to a known allowlist. Route is the
+// caller's responsibility (read from usePathname or the URL).
+function error(
+  err: unknown,
+  ctx?: { route?: string; source?: string },
+): void {
+  const e = err instanceof Error ? err : null;
+  const message = e?.message ?? (typeof err === "string" ? err : "Unknown");
+  event("js_error", {
+    error_class: classify(e?.name),
+    message: message.slice(0, 300),
+    stack_hash: stackFingerprint(e?.stack),
+    route: ctx?.route ?? "unknown",
+    source: ctx?.source ?? "manual",
+  });
+}
+
+export const rum = { event, timing, vital, error };
 export type { Attrs, WebVitalMetric };

@@ -1,12 +1,19 @@
 // Prometheus exposition endpoint.
 //
-// Gated to loopback + RFC1918 source addresses. Caddy on the host does
-// not proxy /api/metrics — that's the public-side gate. In-cluster
+// Gated to loopback + RFC1918 sources. Caddy on the host does not
+// proxy /api/metrics — that's the public-side gate. In-cluster
 // Prometheus scrapes via the tts-web Service (kube-proxy routes to the
-// node IP since the pod is hostNetwork), and pods talk over RFC1918
-// addresses, so this passes. Any external request that somehow reaches
-// the bind would carry an X-Forwarded-For header set by Caddy, or a
-// non-private remote IP — both are denied.
+// hostNetwork pod), and pods talk over RFC1918 addresses, so this
+// passes. Any external request that somehow reaches the bind would
+// carry x-real-ip / x-forwarded-for set by Caddy with a public IP, and
+// is denied here.
+//
+// Why we don't reject on bare XFF presence: kube-proxy and the
+// OpenTelemetry auto-instrumentation can both inject XFF on internal
+// hops (e.g. Service IP → hostPort routing on hostNetwork pods adds
+// the cluster CIDR as a hop). We instead inspect the LEFTMOST IP in
+// XFF — that's the originating client by RFC 7239 convention. If
+// every hop is private, accept.
 
 import { headers } from "next/headers";
 
@@ -18,15 +25,17 @@ export const dynamic = "force-dynamic";
 export async function GET(): Promise<Response> {
   const h = await headers();
 
-  // If Caddy proxied this request, X-Forwarded-For is set. /api/metrics
-  // is never proxied by Caddy → presence of XFF means the request came
-  // from the public side. Deny.
-  if (h.get("x-forwarded-for")) {
-    return new Response("forbidden", { status: 403 });
+  const xff = h.get("x-forwarded-for");
+  if (xff) {
+    const hops = xff
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (hops.length > 0 && !hops.every(isLoopbackOrRfc1918)) {
+      return new Response("forbidden", { status: 403 });
+    }
   }
 
-  // Best-effort source check via headers Next.js exposes. If not
-  // resolvable, fall through to the XFF-absent gate above.
   const remote = h.get("x-real-ip") ?? "";
   if (remote && !isLoopbackOrRfc1918(remote)) {
     return new Response("forbidden", { status: 403 });

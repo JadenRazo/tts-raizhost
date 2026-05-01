@@ -195,9 +195,24 @@ export const rumPositionSaveFailedTotal = getOrCreateCounter({
 
 export const rumWebVital = getOrCreateHistogram({
   name: "rum_web_vital",
-  help: "Web Vitals values observed on the reader page.",
-  labelNames: ["metric"],
+  help: "Web Vitals values observed across all routes.",
+  // route label is template-bucketed (8 known + 'other') in /api/rum, so
+  // cardinality is metric (5) × route (~9) = ~45 series — well-bounded.
+  labelNames: ["metric", "route"],
   buckets: [0.1, 0.25, 0.5, 1, 2, 4, 8],
+});
+
+export const rumJsErrorsTotal = getOrCreateCounter({
+  name: "rum_js_errors_total",
+  help: "JavaScript errors captured on the client by class and route.",
+  // error_class bounded to 9 (allowlist + Other), route bounded to ~9.
+  labelNames: ["error_class", "route"],
+});
+
+export const rumFunnelStepTotal = getOrCreateCounter({
+  name: "rum_funnel_step_total",
+  help: "Funnel step events (upload_succeeded, read_started, read_engaged_30s, read_session_end).",
+  labelNames: ["step"],
 });
 
 // ---------------------------------------------------------------------

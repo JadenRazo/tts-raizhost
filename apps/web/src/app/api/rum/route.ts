@@ -24,6 +24,8 @@ import {
   rumAudioStallDurationSeconds,
   rumAudioStallsTotal,
   rumCanPlayToAudibleSeconds,
+  rumFunnelStepTotal,
+  rumJsErrorsTotal,
   rumPlayToAudibleSeconds,
   rumPositionSaveFailedTotal,
   rumPrefetchFiredTotal,
@@ -65,6 +67,14 @@ const ALLOWED_EVENTS = new Set([
   "play_to_audible",
   "stall",
   "web_vital",
+  // Phase 1.1 — global JS error capture (window.error,
+  // unhandledrejection, React error boundary).
+  "js_error",
+  // Phase 1.3 — funnel events.
+  "upload_succeeded",
+  "read_started",
+  "read_engaged_30s",
+  "read_session_end",
 ]);
 
 const ALLOWED_AUDIO_ERROR_KINDS = new Set([
@@ -74,6 +84,45 @@ const ALLOWED_AUDIO_ERROR_KINDS = new Set([
 ]);
 
 const ALLOWED_VITAL_METRICS = new Set(["LCP", "INP", "CLS", "FCP", "TTFB"]);
+
+// Bounded route label. Anything off-list collapses to "other" to keep
+// cardinality fixed regardless of what the client sends.
+const ALLOWED_ROUTES = new Set([
+  "/",
+  "/login",
+  "/signup",
+  "/upload",
+  "/read/[bookId]",
+  "/enroll/[token]",
+  "/recover",
+]);
+function bucketRoute(raw: unknown): string {
+  if (typeof raw !== "string") return "other";
+  if (ALLOWED_ROUTES.has(raw)) return raw;
+  return "other";
+}
+
+// Mirrors lib/rum.ts:KNOWN_ERROR_CLASSES. Server-side enforcement is
+// belt-and-suspenders against a forged beacon trying to inflate
+// cardinality with arbitrary error_class values.
+const ALLOWED_ERROR_CLASSES = new Set([
+  "TypeError",
+  "ReferenceError",
+  "SyntaxError",
+  "RangeError",
+  "URIError",
+  "AbortError",
+  "NetworkError",
+  "Error",
+  "Other",
+]);
+
+const ALLOWED_FUNNEL_STEPS = new Set([
+  "upload_succeeded",
+  "read_started",
+  "read_engaged_30s",
+  "read_session_end",
+]);
 
 // ---------------------------------------------------------------------
 // Token bucket — in-process, per sessionId. 60 events / minute, refilled
@@ -171,12 +220,33 @@ function recordEvent(name: string, attrs: Record<string, unknown> | undefined): 
         ? a.metric
         : null;
       const value = num(a.value);
+      const route = bucketRoute(a.route);
       if (metric && value !== null) {
         // For time vitals, value is in ms; for CLS, value is a unitless
         // ratio. The histogram buckets cover both ranges (CLS values
         // sort into the smaller buckets).
         const observed = metric === "CLS" ? value : value / 1000;
-        rumWebVital.labels({ metric }).observe(observed);
+        rumWebVital.labels({ metric, route }).observe(observed);
+      }
+      break;
+    }
+    case "js_error": {
+      const error_class = typeof a.error_class === "string" && ALLOWED_ERROR_CLASSES.has(a.error_class)
+        ? a.error_class
+        : "Other";
+      const route = bucketRoute(a.route);
+      rumJsErrorsTotal.labels({ error_class, route }).inc();
+      break;
+    }
+    case "upload_succeeded":
+    case "read_started":
+    case "read_engaged_30s":
+    case "read_session_end": {
+      // Funnel-step events all share a single counter so dashboard
+      // queries can rate() and divide step-N by step-(N-1) for
+      // conversion. Step is whitelisted by ALLOWED_EVENTS already.
+      if (ALLOWED_FUNNEL_STEPS.has(name)) {
+        rumFunnelStepTotal.labels({ step: name }).inc();
       }
       break;
     }
@@ -223,9 +293,14 @@ export async function POST(req: Request): Promise<Response> {
     if (!ALLOWED_EVENTS.has(ev.name)) continue;
     recordEvent(ev.name, ev.attrs);
     // Promtail picks this up because the record contains rum=true and
-    // we emit one JSON line per event. Don't include the raw text or
-    // bookId — the beacon shape already excludes them, but defense
-    // in depth.
+    // we emit one JSON line per event. The spread includes trace_id /
+    // span_id from the client when present (lib/rum.ts attaches them
+    // from the active W3C trace context). Loki then indexes by
+    // sessionId for per-user timelines, and the trace_id field links
+    // the log entry to the matching Tempo waterfall.
+    //
+    // Don't include the raw text or bookId — the beacon shape already
+    // excludes them, but defense in depth.
     console.info(JSON.stringify({
       rum: true,
       event: ev.name,
