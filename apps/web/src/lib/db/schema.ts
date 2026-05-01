@@ -11,6 +11,7 @@ import { relations, sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   pgTable,
@@ -300,6 +301,86 @@ export type BookSentence = typeof bookSentences.$inferSelect;
 export type NewBookSentence = typeof bookSentences.$inferInsert;
 
 // ---------------------------------------------------------------------------
+// book_prerender_runs
+// ---------------------------------------------------------------------------
+// Persistent marker for "this (book, voice, speed) has been fully
+// prerendered". The in-process `inflight` Map in lib/tts-prerender.ts
+// dedupes within a single pod's lifetime; this table is the source of
+// truth across pod restarts. Without it, every reader that opens a
+// book after a deploy walks all ~4500 sentences re-checking the audio
+// cache before realizing every sentence is already on disk.
+//
+// status values: queued | in_progress | complete | failed. Enforced by
+// a CHECK constraint rather than pgEnum to keep migrations
+// rollback-friendly (adding/dropping enum values requires a separate
+// transactional dance Postgres only partly supports).
+
+export const bookPrerenderRuns = pgTable(
+  "book_prerender_runs",
+  {
+    bookId: uuid("book_id")
+      .references(() => books.id, { onDelete: "cascade" })
+      .notNull(),
+    voiceId: text("voice_id").notNull(),
+    /** Quantized to two decimal places — see ALLOWED_SPEEDS in
+     * apps/web/src/app/api/tts/route.ts. */
+    speed: real("speed").notNull(),
+    status: text("status").notNull(),
+    prerenderedAt: tz("prerendered_at"),
+    errorText: text("error_text"),
+    updatedAt: nowTz("updated_at"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.bookId, t.voiceId, t.speed] }),
+    check(
+      "book_prerender_runs_status_check",
+      sql`${t.status} in ('queued', 'in_progress', 'complete', 'failed')`,
+    ),
+  ],
+);
+
+export type BookPrerenderRun = typeof bookPrerenderRuns.$inferSelect;
+export type NewBookPrerenderRun = typeof bookPrerenderRuns.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// book_chapters
+// ---------------------------------------------------------------------------
+// Outline / table-of-contents extracted from the PDF at upload time.
+// Each chapter points to the sentence idx where it begins (resolved from
+// the PDF's `dest` → page → first sentence-on-page mapping). Books
+// without a usable PDF outline have zero rows here, and the reader's
+// chapter navigation falls through to page-level. `depth` preserves
+// hierarchy so a future UI can render nested TOCs; `ord` preserves
+// authorial order across the depth tree (PDF outlines are walked
+// depth-first, so `ord` is just the visit index).
+
+export const bookChapters = pgTable(
+  "book_chapters",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bookId: uuid("book_id")
+      .references(() => books.id, { onDelete: "cascade" })
+      .notNull(),
+    title: text("title").notNull(),
+    startSentenceIdx: integer("start_sentence_idx").notNull(),
+    depth: integer("depth").default(0).notNull(),
+    ord: integer("ord").notNull(),
+  },
+  (t) => [
+    index("book_chapters_book_id_idx").on(t.bookId, t.startSentenceIdx),
+    uniqueIndex("book_chapters_book_id_ord_idx").on(t.bookId, t.ord),
+    check(
+      "book_chapters_start_sentence_idx_chk",
+      sql`${t.startSentenceIdx} >= 0`,
+    ),
+    check("book_chapters_depth_chk", sql`${t.depth} >= 0`),
+  ],
+);
+
+export type BookChapter = typeof bookChapters.$inferSelect;
+export type NewBookChapter = typeof bookChapters.$inferInsert;
+
+// ---------------------------------------------------------------------------
 // reading_positions
 // ---------------------------------------------------------------------------
 // One row per (user, book). Last write wins. Updated on a 1s debounce while
@@ -327,22 +408,132 @@ export type NewReadingPosition = typeof readingPositions.$inferInsert;
 // ---------------------------------------------------------------------------
 // user_settings
 // ---------------------------------------------------------------------------
+// Per-user reading preferences. The hardware-control mapping columns
+// (next_track_action, prev_track_action, seek_forward_action,
+// seek_backward_action) decide what happens when a user presses a
+// CarPlay / Bluetooth / lock-screen control. Defaults match the
+// audiobook conventions every iOS user already knows: the steering-wheel
+// skip pair maps to ±15s seek (Audible / Apple Books), and the
+// nexttrack/previoustrack pair (used by some headsets and CarPlay UI
+// taps) maps to whole-page jumps.
+//
+// `*_chapter` is accepted in the action enums even though chapter
+// detection isn't shipped yet — that way the migration that adds it
+// later doesn't need to alter the CHECK constraints.
 
-export const userSettings = pgTable("user_settings", {
-  userId: uuid("user_id")
-    .primaryKey()
-    .references(() => users.id, { onDelete: "cascade" }),
-  voiceId: text("voice_id").default("af_heart").notNull(),
-  speed: real("speed").default(1.0).notNull(),
-  lastBookId: uuid("last_book_id").references(() => books.id, {
-    onDelete: "set null",
-  }),
-  theme: text("theme").default("auto").notNull(),
-  updatedAt: nowTz("updated_at"),
-});
+export const userSettings = pgTable(
+  "user_settings",
+  {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    voiceId: text("voice_id").default("af_heart").notNull(),
+    speed: real("speed").default(1.0).notNull(),
+    lastBookId: uuid("last_book_id").references(() => books.id, {
+      onDelete: "set null",
+    }),
+    theme: text("theme").default("auto").notNull(),
+    /** What to do when CarPlay / Bluetooth sends `nexttrack`. Some cars
+     * surface this on a single press of the wheel skip-forward button
+     * (music-mode behavior); others surface seekforward instead. */
+    nextTrackAction: text("next_track_action")
+      .default("next_page")
+      .notNull(),
+    prevTrackAction: text("prev_track_action")
+      .default("prev_page")
+      .notNull(),
+    /** What to do when CarPlay / Bluetooth sends `seekforward(N)` —
+     * the audiobook-mode behavior of the wheel skip buttons. Default
+     * `seek_forward` means "jump N seconds in the virtual book
+     * timeline", N from `seekStepSeconds`. */
+    seekForwardAction: text("seek_forward_action")
+      .default("seek_forward")
+      .notNull(),
+    seekBackwardAction: text("seek_backward_action")
+      .default("seek_back")
+      .notNull(),
+    /** Step in seconds when seek_forward / seek_back action fires.
+     * Audible / Apple Books default 15. Range bounded so a user can't
+     * accidentally configure a 1-hour or 1-second skip that nullifies
+     * the feature. */
+    seekStepSeconds: integer("seek_step_seconds").default(15).notNull(),
+    /** Auto-rewind by this many seconds on Play after a long pause.
+     * Set to 0 to disable. Long-pause threshold is ~30s, hardcoded —
+     * anything tighter feels like a glitch, anything looser and the
+     * user has forgotten where they were. */
+    smartRewindSeconds: integer("smart_rewind_seconds")
+      .default(5)
+      .notNull(),
+    /** Default duration the sleep timer button preselects. */
+    sleepTimerDefaultMinutes: integer("sleep_timer_default_minutes")
+      .default(30)
+      .notNull(),
+    updatedAt: nowTz("updated_at"),
+  },
+  (t) => [
+    check(
+      "user_settings_next_track_action_chk",
+      sql`${t.nextTrackAction} in ('next_sentence','next_page','next_chapter','seek_forward','restart_sentence')`,
+    ),
+    check(
+      "user_settings_prev_track_action_chk",
+      sql`${t.prevTrackAction} in ('prev_sentence','prev_page','prev_chapter','seek_back','restart_sentence','restart_book')`,
+    ),
+    check(
+      "user_settings_seek_forward_action_chk",
+      sql`${t.seekForwardAction} in ('seek_forward','next_sentence','next_page','next_chapter')`,
+    ),
+    check(
+      "user_settings_seek_backward_action_chk",
+      sql`${t.seekBackwardAction} in ('seek_back','prev_sentence','prev_page','prev_chapter','restart_sentence')`,
+    ),
+    check(
+      "user_settings_seek_step_seconds_chk",
+      sql`${t.seekStepSeconds} between 5 and 120`,
+    ),
+    check(
+      "user_settings_smart_rewind_seconds_chk",
+      sql`${t.smartRewindSeconds} between 0 and 60`,
+    ),
+    check(
+      "user_settings_sleep_timer_default_minutes_chk",
+      sql`${t.sleepTimerDefaultMinutes} between 5 and 120`,
+    ),
+  ],
+);
 
 export type UserSettings = typeof userSettings.$inferSelect;
 export type NewUserSettings = typeof userSettings.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// bookmarks
+// ---------------------------------------------------------------------------
+// One row per (user, book, sentence) bookmark. `note` is optional. Lookup
+// is always (user_id, book_id) so the composite index there is the
+// hot path — the PK on `id` only matters for delete-by-id.
+
+export const bookmarks = pgTable(
+  "bookmarks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    bookId: uuid("book_id")
+      .references(() => books.id, { onDelete: "cascade" })
+      .notNull(),
+    sentenceIdx: integer("sentence_idx").notNull(),
+    note: text("note"),
+    createdAt: nowTz("created_at"),
+  },
+  (t) => [
+    index("bookmarks_user_book_idx").on(t.userId, t.bookId, t.sentenceIdx),
+    check("bookmarks_sentence_idx_chk", sql`${t.sentenceIdx} >= 0`),
+  ],
+);
+
+export type Bookmark = typeof bookmarks.$inferSelect;
+export type NewBookmark = typeof bookmarks.$inferInsert;
 
 // ---------------------------------------------------------------------------
 // tts_cache
@@ -436,7 +627,15 @@ export const booksRelations = relations(books, ({ one, many }) => ({
     references: [users.id],
   }),
   sentences: many(bookSentences),
+  chapters: many(bookChapters),
   readingPositions: many(readingPositions),
+}));
+
+export const bookChaptersRelations = relations(bookChapters, ({ one }) => ({
+  book: one(books, {
+    fields: [bookChapters.bookId],
+    references: [books.id],
+  }),
 }));
 
 export const bookSentencesRelations = relations(bookSentences, ({ one }) => ({
@@ -467,6 +666,17 @@ export const userSettingsRelations = relations(userSettings, ({ one }) => ({
   }),
   lastBook: one(books, {
     fields: [userSettings.lastBookId],
+    references: [books.id],
+  }),
+}));
+
+export const bookmarksRelations = relations(bookmarks, ({ one }) => ({
+  user: one(users, {
+    fields: [bookmarks.userId],
+    references: [users.id],
+  }),
+  book: one(books, {
+    fields: [bookmarks.bookId],
     references: [books.id],
   }),
 }));
