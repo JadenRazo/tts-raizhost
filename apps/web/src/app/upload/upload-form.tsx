@@ -2,17 +2,25 @@
 
 // Client-side PDF parse + upload.
 //
-// pdfjs-dist worker: we load the worker from jsDelivr at runtime rather than
-// bundling it. Next 15 / Turbopack worker bundling is fragile and the
-// CDN-hosted worker matches the package version pinned in package.json.
+// pdfjs-dist worker: we self-host the worker from public/ rather than
+// pulling from a CDN. Self-hosting matches the package version exactly,
+// keeps a CDN compromise from silently exfiltrating uploaded PDFs (the
+// worker sees the bytes pre-upload), and avoids a third-party connect-
+// src in our CSP. The file is re-copied from node_modules on every
+// build via scripts/copy-pdfjs-worker.mjs (prebuild + predev hooks).
 
 import { useCallback, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  type ExtractedChapter,
+  extractChaptersFromPdf,
+} from "@/lib/extract-chapters";
+import { rum } from "@/lib/rum";
+import { cleanupSentencePipeline } from "@/lib/text-cleanup";
 import { flowTextItems, reflowSpacedGlyphs, type RawTextItem } from "@/lib/text-reflow";
 
-const PDFJS_VERSION = "4.10.38";
-const WORKER_SRC = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/legacy/build/pdf.worker.min.mjs`;
+const WORKER_SRC = "/pdf.worker.min.mjs";
 
 const SENTENCE_SPLIT = /(?<=[.!?])\s+(?=[A-Z"“«(])/;
 const MIN_SENTENCE_LEN = 3;
@@ -31,6 +39,7 @@ type Stage =
 type ParsedPdf = {
   pageCount: number;
   sentences: { idx: number; page: number; text: string }[];
+  chapters: ExtractedChapter[];
   textSha256: string;
   title: string;
   author: string | null;
@@ -48,8 +57,10 @@ function normalizeWhitespace(text: string): string {
 function segmentSentences(
   perPageText: { page: number; text: string }[],
 ): { idx: number; page: number; text: string }[] {
-  const out: { idx: number; page: number; text: string }[] = [];
-  let idx = 0;
+  // Stage 1: naive period/exclam/question split. Produces over-fragmented
+  // output (Mr.|Walters said... is two rows here), which the cleanup
+  // pipeline then merges via mergeAbbreviationSplits.
+  const raw: { page: number; text: string }[] = [];
   for (const { page, text } of perPageText) {
     const normalized = normalizeWhitespace(text);
     if (!normalized) continue;
@@ -57,11 +68,14 @@ function segmentSentences(
     for (const part of parts) {
       const t = part.trim();
       if (t.length < MIN_SENTENCE_LEN || t.length > MAX_SENTENCE_LEN) continue;
-      out.push({ idx, page, text: t });
-      idx++;
+      raw.push({ page, text: t });
     }
   }
-  return out;
+
+  // Stage 2: clean each sentence, drop unlistenable junk (TOC dot-leaders,
+  // index entries, Roman-numeral chapter dividers, Project Gutenberg
+  // boilerplate at edges), merge abbreviation false-splits, re-index.
+  return cleanupSentencePipeline(raw);
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -108,9 +122,22 @@ async function parsePdf(
   const meta = await doc.getMetadata().catch(() => null);
   const info = (meta?.info ?? {}) as { Title?: string; Author?: string };
 
+  const sentences = segmentSentences(perPageText);
+
+  // Chapter extraction requires the doc to still be alive (getOutline +
+  // getDestination + getPageIndex all hit doc internals), so do this
+  // before destroy(). On any error, we end up with zero chapters and
+  // the reader falls through to page-level navigation — never block
+  // the upload on outline parsing.
+  let chapters: ExtractedChapter[] = [];
+  try {
+    chapters = await extractChaptersFromPdf(doc, sentences);
+  } catch (err) {
+    console.warn("[upload] chapter extraction failed", err);
+  }
+
   await doc.destroy();
 
-  const sentences = segmentSentences(perPageText);
   const normalizedFull = normalizeWhitespace(fullChunks.join(" "));
   const textSha256 = await sha256Hex(normalizedFull);
 
@@ -118,7 +145,7 @@ async function parsePdf(
   const title = (info.Title ?? "").trim() || fallbackTitle;
   const author = (info.Author ?? "").trim() || null;
 
-  return { pageCount, sentences, textSha256, title, author };
+  return { pageCount, sentences, chapters, textSha256, title, author };
 }
 
 export function UploadForm({
@@ -195,7 +222,7 @@ export function UploadForm({
         setStage({
           kind: "error",
           message:
-            "Couldn't extract any text from this PDF. Scanned/image-only PDFs aren't supported yet.",
+            "Couldn't extract any text from this PDF. Only text-extractable PDFs are supported (scanned/image-only PDFs won't work).",
         });
         return;
       }
@@ -251,6 +278,26 @@ export function UploadForm({
         setStage({ kind: "uploading-sentences", uploaded, total });
       }
 
+      // Chapters are best-effort: a failure here doesn't fail the
+      // upload — the reader's chapter actions just fall through to
+      // page-level navigation.
+      if (parsed.chapters.length > 0) {
+        try {
+          await fetch(`/api/books/${bookId}/chapters`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ chapters: parsed.chapters }),
+          });
+        } catch (err) {
+          console.warn("[upload] chapter upload failed", err);
+        }
+      }
+
+      rum.event("upload_succeeded", {
+        page_count: parsed.pageCount,
+        sentence_count: parsed.sentences.length,
+        chapter_count: parsed.chapters.length,
+      });
       setStage({ kind: "redirecting" });
       router.push("/");
       router.refresh();

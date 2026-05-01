@@ -17,8 +17,8 @@ export function LandingView() {
         <p className="mt-6 max-w-prose text-base leading-relaxed text-muted">
           Upload a PDF, pick a neural voice, and listen. Position is
           remembered across devices, so the page you stop on at your desk
-          is the page that resumes on your phone. Self-hosted, single user
-          per account, no third-party speech APIs.
+          is the page that resumes on your phone. Self-hosted, personal
+          accounts only, no third-party speech APIs.
         </p>
 
         <div className="mt-10 flex flex-wrap items-center gap-4">
@@ -52,9 +52,9 @@ export function LandingView() {
           <div className="grid gap-2 py-5 sm:grid-cols-[10rem_1fr] sm:gap-6">
             <dt className="text-sm font-medium text-fg">Resumes anywhere</dt>
             <dd className="text-sm leading-relaxed text-muted">
-              Your position is written to the server on a one-second
-              debounce. Open the same book on any other device and you
-              pick up at the sentence you left.
+              Your position syncs to the server as you read. Open the same
+              book on any other device and you pick up at the sentence you
+              left.
             </dd>
           </div>
           <div className="grid gap-2 py-5 sm:grid-cols-[10rem_1fr] sm:gap-6">
@@ -108,8 +108,8 @@ export function LandingView() {
             <span className="font-mono text-xs text-subtle">03</span>
             <span>
               <span className="text-fg">Confirm the current code</span>{" "}
-              once and you&apos;re in. Every future sign-in is the same
-              six digits.
+              once to finish setup. From then on, sign in with whatever
+              6-digit code your authenticator is showing.
             </span>
           </li>
         </ol>
