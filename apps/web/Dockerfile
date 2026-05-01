@@ -16,6 +16,12 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# ffmpeg is used by lib/tts-cache.ts for silence-trim post-processing
+# of cached Opus audio. Without it the feature self-disables on first
+# ENOENT and logs a single warning — but silence stays in the cache.
+# alpine's ffmpeg ships with libopus support which is all we need.
+RUN apk add --no-cache ffmpeg
+
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 

@@ -20,15 +20,18 @@
     "db:studio": "drizzle-kit studio",
     "create-user": "tsx --env-file=.env scripts/create-user.ts",
     "issue-invite": "tsx --env-file=.env scripts/issue-invite.ts",
+    "user-stats": "tsx --env-file=.env scripts/user-stats.ts",
     "quota-reset": "tsx --env-file=.env scripts/quota-reset.ts",
     "seed-public-books": "tsx --env-file=.env scripts/seed-public-books.ts",
-    "cleanup-existing-sentences": "tsx --env-file=.env scripts/cleanup-existing-sentences.ts"
+    "cleanup-existing-sentences": "tsx --env-file=.env scripts/cleanup-existing-sentences.ts",
+    "backfill-chapters": "tsx --env-file=.env scripts/backfill-chapters.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4",
     "bcryptjs": "^3.0.2",
     "better-auth": "^1.5.6",
     "drizzle-orm": "^0.45.1",
+    "kokoro-js": "^1.2.1",
     "next": "^15.5.15",
     "otpauth": "^9.4.0",
     "pdfjs-dist": "^4.10.38",

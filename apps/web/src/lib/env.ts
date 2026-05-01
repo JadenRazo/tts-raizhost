@@ -66,6 +66,20 @@ export const env = {
   get CACHE_DIR() {
     return optional("CACHE_DIR", `${this.DATA_DIR}/cache`)!;
   },
+  /** Path to the ffmpeg binary used by the silence-trim post-process.
+   *  Defaults to "ffmpeg" (resolved on PATH). Set to an empty string
+   *  to disable silence trim entirely. */
+  get FFMPEG_BIN() {
+    return optional("FFMPEG_BIN", "ffmpeg")!;
+  },
+  /** When "1" (default), the cache layer pipes each newly-cached
+   *  Opus file through ffmpeg's silenceremove filter to strip
+   *  leading/trailing silence kokoro emits. Cuts ~5-10% off total book
+   *  duration without affecting speech intelligibility. Set to "0" to
+   *  disable (e.g. when ffmpeg isn't available). */
+  get TTS_SILENCE_TRIM() {
+    return optional("TTS_SILENCE_TRIM", "1") === "1";
+  },
   get NODE_ENV() {
     return optional("NODE_ENV", "development")!;
   },

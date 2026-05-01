@@ -1,0 +1,104 @@
+# CI for the Next.js web app. Runs on every PR and on pushes to main.
+# Three gates:
+#   1. typecheck (tsc --noEmit) — catches schema/type drift the moment
+#      it lands, especially around drizzle-orm where a column rename
+#      cascades into every consumer.
+#   2. build (next build) — proves the app compiles end-to-end including
+#      the standalone output that the prod image bakes in. Catches Next
+#      RSC / use-client boundary mistakes that tsc alone misses.
+#   3. lint (next lint) — soft gate; the existing repo doesn't enforce
+#      strict eslint, but failures still surface so we don't ship them.
+#
+# We deliberately do NOT cut a release image here. The current deploy
+# pipeline rebuilds tts-web:v0.5.0 elsewhere (the image is rebuilt on
+# every npm run build cycle locally on tts-vps and rolled out via
+# kubectl rollout restart). Once that pipeline is replaced with a
+# proper GHCR-pushing flow, add a deploy.yml here.
+#
+# The Python services (services/kokoro, services/kokoro-gpu) are not
+# yet covered. Their CI lives separately because the Kokoro v1.0 model
+# weights aren't available in CI runners — adding a stub-mode tests
+# entry is a Phase 2 follow-up.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel any in-flight run for the same ref when a new commit lands —
+# we only care about the latest result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: web — typecheck + build + lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # Build needs DATABASE_URL et al. for module-load-time validation.
+      # We pass synthetic values that pass shape checks but never hit
+      # any real service — `next build` never opens a connection.
+      - name: Typecheck
+        run: npm run typecheck
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+          BETTER_AUTH_SECRET: 0000000000000000000000000000000000000000000000000000000000000000
+          BETTER_AUTH_URL: http://localhost:3000
+          BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3000
+          AUTH_KMS_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          PUBLIC_BASE_URL: http://localhost:3000
+          KOKORO_URL: http://localhost:8000
+          DATA_DIR: /tmp/tts-data
+          BOOKS_DIR: /tmp/tts-data/books
+          CACHE_DIR: /tmp/tts-data/cache
+          CACHE_MAX_BYTES: "10737418240"
+          CACHE_TTL_DAYS: "60"
+          NODE_ENV: production
+          PORT: "3000"
+
+      - name: Build
+        run: npm run build
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+          BETTER_AUTH_SECRET: 0000000000000000000000000000000000000000000000000000000000000000
+          BETTER_AUTH_URL: http://localhost:3000
+          BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3000
+          AUTH_KMS_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+          PUBLIC_BASE_URL: http://localhost:3000
+          KOKORO_URL: http://localhost:8000
+          DATA_DIR: /tmp/tts-data
+          BOOKS_DIR: /tmp/tts-data/books
+          CACHE_DIR: /tmp/tts-data/cache
+          CACHE_MAX_BYTES: "10737418240"
+          CACHE_TTL_DAYS: "60"
+          NODE_ENV: production
+          PORT: "3000"
+
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
