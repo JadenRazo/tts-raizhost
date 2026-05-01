@@ -30,6 +30,7 @@ import { eq } from "drizzle-orm";
 
 import { getDb } from "../src/lib/db";
 import * as schema from "../src/lib/db/schema";
+import { cleanupSentencePipeline } from "../src/lib/text-cleanup";
 
 // Fixed UUID owning every public book. Conforms to the UUID regex
 // enforced by lib/storage:assertUuid so the file path helper accepts
@@ -283,11 +284,10 @@ function isLikelyHeading(t: string): boolean {
 function segmentSentences(
   cleanText: string,
 ): { idx: number; page: number; text: string }[] {
-  const out: { idx: number; page: number; text: string }[] = [];
-  if (!cleanText) return out;
+  const draft: { page: number; text: string }[] = [];
+  if (!cleanText) return [];
   const parts = cleanText.split(SENTENCE_SPLIT);
   let charsSoFar = 0;
-  let idx = 0;
   for (const part of parts) {
     const t = part.trim();
     if (t.length < MIN_SENTENCE_LEN || t.length > MAX_SENTENCE_LEN) continue;
@@ -295,11 +295,16 @@ function segmentSentences(
     if (wordCount < MIN_SENTENCE_WORDS) continue;
     if (isLikelyHeading(t)) continue;
     const page = Math.max(1, Math.floor(charsSoFar / APPROX_CHARS_PER_PAGE) + 1);
-    out.push({ idx, page, text: t });
-    idx++;
+    draft.push({ page, text: t });
     charsSoFar += t.length + 1;
   }
-  return out;
+  // Hand off to the canonical cleanup pipeline used by uploads and the
+  // backfill script. This is what title-cases shouty name openers
+  // ("MARCUS AURELIUS ANTONINUS was born…" → "Marcus Aurelius Antoninus
+  // was born…"), strips Project-Gutenberg italic underscores, drops
+  // boilerplate, and merges abbreviation false-splits — the same rules
+  // user-uploaded PDFs get.
+  return cleanupSentencePipeline(draft);
 }
 
 async function ensureSystemUser(): Promise<void> {

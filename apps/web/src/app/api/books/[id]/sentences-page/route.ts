@@ -56,35 +56,50 @@ export async function GET(req: Request, { params }: RouteContext) {
 
   const db = getDb();
 
-  const owned = await db
-    .select({ id: schema.books.id })
-    .from(schema.books)
-    .where(and(eq(schema.books.id, bookId), userCanReadBook(userId)))
-    .limit(1);
-  if (owned.length === 0) {
-    observe(404);
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  // Fetch limit+1 to detect hasMore without a separate count query.
-  const rows = await db
+  // Single round-trip: drive from `books` (so we always get exactly one
+  // marker row when the user can read the book, even if `from` lies
+  // past the last sentence) and LEFT JOIN the sentence window. The
+  // ownership filter goes in the WHERE so a non-existent or
+  // not-readable book yields zero rows — surfaced as 404, matching the
+  // pre-collapse two-query behavior. Fetch limit+1 sentences to detect
+  // hasMore without a separate count query.
+  const joined = await db
     .select({
+      bookId: schema.books.id,
       idx: schema.bookSentences.idx,
       page: schema.bookSentences.page,
       text: schema.bookSentences.text,
     })
-    .from(schema.bookSentences)
-    .where(
+    .from(schema.books)
+    .leftJoin(
+      schema.bookSentences,
       and(
-        eq(schema.bookSentences.bookId, bookId),
+        eq(schema.bookSentences.bookId, schema.books.id),
         gte(schema.bookSentences.idx, from),
       ),
     )
+    .where(and(eq(schema.books.id, bookId), userCanReadBook(userId)))
     .orderBy(asc(schema.bookSentences.idx))
     .limit(limit + 1);
 
-  const hasMore = rows.length > limit;
-  const sentences = hasMore ? rows.slice(0, limit) : rows;
+  if (joined.length === 0) {
+    observe(404);
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // The LEFT JOIN produces exactly one row (with null sentence fields)
+  // when the book exists but no sentences match `from`. Filter those
+  // out before shaping the response.
+  const matched = joined.filter(
+    (r): r is typeof r & { idx: number; page: number; text: string } =>
+      r.idx !== null && r.page !== null && r.text !== null,
+  );
+  const hasMore = matched.length > limit;
+  const sentences = (hasMore ? matched.slice(0, limit) : matched).map((r) => ({
+    idx: r.idx,
+    page: r.page,
+    text: r.text,
+  }));
 
   observe(200);
   return NextResponse.json(

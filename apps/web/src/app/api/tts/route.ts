@@ -137,6 +137,12 @@ export async function GET(req: Request) {
   const idxRaw = url.searchParams.get("idx") ?? "";
   const voiceParam = url.searchParams.get("voice");
   const speedParam = url.searchParams.get("speed");
+  // Cheap "is this sentence already cached?" probe used by the
+  // browser-side router. Auth-and-validate the same as a real fetch,
+  // do the cache lookup, and return 204 (HIT) or 404 (MISS) without
+  // synthesis or quota burn. Lets capable clients decide whether to
+  // synthesize locally vs. wait on the server.
+  const isProbe = url.searchParams.get("probe") === "1";
 
   if (!isUuid(bookId)) {
     ttsRequestDurationSeconds
@@ -244,6 +250,22 @@ export async function GET(req: Request) {
   if (hit) {
     const onDisk = await audioFileSize(hit.audioPath);
     if (onDisk !== null) {
+      if (isProbe) {
+        // Probe-only: confirm cached without streaming bytes or
+        // touching the LRU. The browser will (almost certainly) refetch
+        // without `?probe=1` next, which is when the touch happens.
+        ttsRequestDurationSeconds
+          .labels({ cache: "hit", voice: voiceId, status: "204" })
+          .observe(elapsed());
+        return new Response(null, {
+          status: 204,
+          headers: {
+            "X-Cache": "HIT",
+            "X-Sentence-Idx": String(idx),
+            "Last-TTS-Backend": "cache",
+          },
+        });
+      }
       ttsCacheHitsTotal.labels({ voice: voiceId }).inc();
       void cacheTouch(db, key).catch((err) =>
         console.error("[tts] cacheTouch failed", err),
@@ -263,6 +285,21 @@ export async function GET(req: Request) {
     console.warn("[tts] cache row points at missing file", {
       cacheKey: key,
       audioPath: hit.audioPath,
+    });
+  }
+
+  if (isProbe) {
+    // Cache miss on a probe: surface 404 so the client decides whether
+    // to synthesize locally. No quota charge, no kokoro hit.
+    ttsRequestDurationSeconds
+      .labels({ cache: "miss", voice: voiceId, status: "404" })
+      .observe(elapsed());
+    return new Response(null, {
+      status: 404,
+      headers: {
+        "X-Cache": "MISS",
+        "X-Sentence-Idx": String(idx),
+      },
     });
   }
 

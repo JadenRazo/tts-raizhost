@@ -12,6 +12,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { getDb, schema } from "@/lib/db";
 import { isUuid } from "@/lib/storage";
+import { cleanSentenceText } from "@/lib/text-cleanup";
 import { reflowSpacedGlyphs } from "@/lib/text-reflow";
 
 export const runtime = "nodejs";
@@ -89,18 +90,35 @@ export async function POST(req: Request, { params }: RouteContext) {
     );
   }
 
-  const rows = parsed.data.sentences.map((s) => {
-    const cleaned = reflowSpacedGlyphs(s.text);
-    if (cleaned !== s.text) {
-      console.info("[sentences] reflow applied", {
-        bookId,
-        idx: s.idx,
-        beforeLen: s.text.length,
-        afterLen: cleaned.length,
-      });
-    }
-    return { bookId, idx: s.idx, page: s.page, text: cleaned };
-  });
+  // Defensive double-pass: reflowSpacedGlyphs catches letter-tracked
+  // titles ("N i n e" → "Nine"), cleanSentenceText strips italic
+  // underscores, footnote markers, illustration blocks. Idempotent — a
+  // properly-cleaned client payload passes through unchanged. We do NOT
+  // run the drop heuristics here because the client already reasons over
+  // book-wide context (idx position relative to total) when deciding
+  // what to skip; running them again with partial-batch context risks
+  // creating gaps the client didn't intend. We do skip rows whose text
+  // collapses to empty (pure markup) since inserting empty text would
+  // produce a silent slot in the reader.
+  const rows = parsed.data.sentences
+    .map((s) => {
+      const reflowed = reflowSpacedGlyphs(s.text);
+      const cleaned = cleanSentenceText(reflowed);
+      if (cleaned !== s.text) {
+        console.info("[sentences] cleanup applied", {
+          bookId,
+          idx: s.idx,
+          beforeLen: s.text.length,
+          afterLen: cleaned.length,
+        });
+      }
+      return { bookId, idx: s.idx, page: s.page, text: cleaned };
+    })
+    .filter((r) => r.text.length > 0);
+
+  if (rows.length === 0) {
+    return NextResponse.json({ inserted: 0 });
+  }
 
   const inserted = await db
     .insert(schema.bookSentences)

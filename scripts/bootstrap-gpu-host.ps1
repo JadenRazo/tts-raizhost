@@ -403,8 +403,8 @@ nssm set     $svcName AppEnvironmentExtra `
     "HF_HOME=$hfHome" `
     "KOKORO_DEVICE=cuda" `
     "KOKORO_DTYPE=float32" `
-    "KOKORO_MAX_CONCURRENT_SYNTH=1" `
-    "KOKORO_QUEUE_TIMEOUT_MS=200" `
+    "KOKORO_MAX_CONCURRENT_SYNTH=2" `
+    "KOKORO_QUEUE_TIMEOUT_MS=500" `
     "PYTHONUNBUFFERED=1" `
     "PATH=$svcPath" | Out-Null
 

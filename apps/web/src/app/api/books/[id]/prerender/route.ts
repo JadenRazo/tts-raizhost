@@ -2,14 +2,22 @@
 //
 // Kicks off a background job that synthesizes every sentence in the
 // book at the given (voice, speed) and persists each to the audio
-// cache. The endpoint returns immediately (HTTP 202) — the synth runs
-// in the Next.js process for the rest of its life. After the job
-// finishes, every audio request for that (book, voice, speed) is a
-// cache hit and the user never waits for kokoro again.
+// cache. After a job finishes successfully, every audio request for
+// that (book, voice, speed) is a cache hit and the user never waits
+// for kokoro again.
 //
-// Idempotent: if a prerender for the same (book, voice, speed) is
-// already in-flight, this attaches to it instead of starting a
-// duplicate. Already-cached sentences are skipped.
+// Response shape:
+//   { status: "complete" | "queued" | "in_progress",
+//     prerenderedAt?: string }
+//
+// 200 — status="complete". This (book, voice, speed) was already
+//       prerendered on a prior pod. `prerenderedAt` is the ISO-8601
+//       timestamp from book_prerender_runs.prerendered_at.
+// 202 — status="queued" (we just started a new job) or "in_progress"
+//       (a job for the same triple is already running on this pod).
+//
+// Idempotent: persistent state lives in the book_prerender_runs
+// table; the in-process inflight Map is a same-pod dedup on top.
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -19,7 +27,11 @@ import { getSession } from "@/lib/auth/session";
 import { userCanReadBook } from "@/lib/books";
 import { getDb, schema } from "@/lib/db";
 import { isUuid } from "@/lib/storage";
-import { isPrerenderInflight, prerenderBook } from "@/lib/tts-prerender";
+import {
+  getPrerenderRun,
+  isPrerenderInflight,
+  prerenderBook,
+} from "@/lib/tts-prerender";
 import { ALLOWED_VOICES } from "@/lib/voices";
 
 export const runtime = "nodejs";
@@ -75,6 +87,27 @@ export async function POST(req: Request, { params }: RouteContext) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // Cross-pod short-circuit: if the persistent table records this
+  // (book, voice, speed) as already complete, return 200 immediately
+  // and skip the sentence walk entirely. This is the whole reason the
+  // table exists — without it, every reader on a fresh pod re-walks
+  // ~4500 sentences against the cache before realizing it's a no-op.
+  const existingRun = await getPrerenderRun(
+    db,
+    bookId,
+    voice,
+    speedQuantized,
+  );
+  if (existingRun?.status === "complete") {
+    return NextResponse.json(
+      {
+        status: "complete" as const,
+        prerenderedAt: existingRun.prerenderedAt?.toISOString(),
+      },
+      { status: 200 },
+    );
+  }
+
   const alreadyInflight = isPrerenderInflight(bookId, voice, speedQuantized);
 
   // Fire-and-forget. The prerender helper deduplicates concurrent
@@ -94,7 +127,7 @@ export async function POST(req: Request, { params }: RouteContext) {
     });
 
   return NextResponse.json(
-    { status: alreadyInflight ? "already-running" : "started" },
+    { status: alreadyInflight ? "in_progress" : "queued" },
     { status: 202 },
   );
 }
