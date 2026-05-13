@@ -11,10 +11,10 @@
 # single kokoro-v1.0.onnx (~328 MB). scripts/bootstrap-models.sh fetches
 # both from the kokoro-onnx GitHub release into /var/lib/tts-raizhost/
 # models/kokoro on the node. The Dockerfile mounts /models read-only.
-fastapi>=0.115
-uvicorn[standard]>=0.32
+fastapi>=0.136.1
+uvicorn[standard]>=0.46.0
 kokoro-onnx>=0.5.0
-onnxruntime>=1.20.1
-numpy>=1.26,<3
-pydantic>=2.9
-prometheus-client>=0.21
+onnxruntime>=1.26.0
+numpy>=1.26.4,<3
+pydantic>=2.13.4
+prometheus-client>=0.25.0

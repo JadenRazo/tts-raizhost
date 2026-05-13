@@ -14,11 +14,11 @@
 #   pip install --index-url https://download.pytorch.org/whl/cu128 "torch>=2.6"
 # Putting torch in this requirements.txt would let pip install the CPU
 # wheel by accident.
-fastapi>=0.115
-uvicorn[standard]>=0.32
+fastapi>=0.136.1
+uvicorn[standard]>=0.46.0
 kokoro>=0.9.4
-misaki[en]>=0.7
-prometheus-client>=0.21
-numpy>=1.26,<3
-pydantic>=2.9
-soundfile>=0.12
+misaki[en]>=0.9.4
+prometheus-client>=0.25.0
+numpy>=1.26.4,<3
+pydantic>=2.13.4
+soundfile>=0.13.1
