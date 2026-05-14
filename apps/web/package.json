@@ -27,7 +27,7 @@
     "backfill-chapters": "tsx --env-file=.env scripts/backfill-chapters.ts"
   },
   "dependencies": {
-    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/postcss": "^4.3.0",
     "bcryptjs": "^3.0.3",
     "better-auth": "^1.6.11",
     "drizzle-orm": "^0.45.2",
@@ -40,7 +40,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.3.0",
     "web-vitals": "^4.2.4",
     "zod": "^3.25.76"
   },
