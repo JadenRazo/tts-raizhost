@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.22.2"
+    "node": ">=22.22.3"
   },
   "scripts": {
     "predev": "node scripts/copy-pdfjs-worker.mjs",
@@ -51,7 +51,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "drizzle-kit": "^0.31.10",
-    "tsx": "^4.21.0",
+    "tsx": "^4.22.0",
     "typescript": "^5.9.3"
   }
 }
