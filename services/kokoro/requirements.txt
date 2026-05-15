@@ -12,7 +12,7 @@
 # both from the kokoro-onnx GitHub release into /var/lib/tts-raizhost/
 # models/kokoro on the node. The Dockerfile mounts /models read-only.
 fastapi>=0.136.1
-uvicorn[standard]>=0.46.0
+uvicorn[standard]>=0.47.0
 kokoro-onnx>=0.5.0
 onnxruntime>=1.26.0
 numpy>=1.26.4,<3

@@ -15,7 +15,7 @@
 # Putting torch in this requirements.txt would let pip install the CPU
 # wheel by accident.
 fastapi>=0.136.1
-uvicorn[standard]>=0.46.0
+uvicorn[standard]>=0.47.0
 kokoro>=0.9.4
 misaki[en]>=0.9.4
 prometheus-client>=0.25.0
