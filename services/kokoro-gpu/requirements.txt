@@ -19,6 +19,6 @@ uvicorn[standard]>=0.47.0
 kokoro>=0.9.4
 misaki[en]>=0.9.4
 prometheus-client>=0.25.0
-numpy>=1.26.4,<3
+numpy>=2.4.5,<3
 pydantic>=2.13.4
 soundfile>=0.13.1
