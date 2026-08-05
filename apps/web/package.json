@@ -29,10 +29,10 @@
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.0",
     "bcryptjs": "^3.0.3",
-    "better-auth": "^1.6.11",
+    "better-auth": "^1.6.22",
     "drizzle-orm": "^0.45.2",
     "kokoro-js": "^1.2.1",
-    "next": "^15.5.18",
+    "next": "^15.5.21",
     "otpauth": "^9.5.1",
     "pdfjs-dist": "^4.10.38",
     "pg": "^8.20.0",
@@ -43,6 +43,13 @@
     "tailwindcss": "^4.3.0",
     "web-vitals": "^4.2.4",
     "zod": "^3.25.76"
+  },
+  "overrides": {
+    "tar": "^7.5.21",
+    "protobufjs": "^7.6.5",
+    "postcss": "^8.5.23",
+    "sharp": "^0.35.0",
+    "esbuild": "^0.28.1"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
