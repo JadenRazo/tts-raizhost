@@ -14,9 +14,22 @@ permissions:
   contents: read
 
 jobs:
+  workflow-policy:
+    name: Workflow supply-chain policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Reject mutable workflow dependencies
+        run: scripts/check-workflow-security.test.sh && scripts/check-workflow-security.sh
+
   web:
     name: Web tests, types, lint, build
     runs-on: ubuntu-latest
+    needs: workflow-policy
     timeout-minutes: 15
     defaults:
       run:
@@ -43,7 +56,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22.22.3"
           cache: npm
@@ -69,6 +82,7 @@ jobs:
   python-contracts:
     name: Python contracts
     runs-on: ubuntu-latest
+    needs: workflow-policy
     timeout-minutes: 5
 
     steps:
@@ -98,6 +112,7 @@ jobs:
   manifests:
     name: Render Kubernetes manifests
     runs-on: ubuntu-latest
+    needs: workflow-policy
     timeout-minutes: 5
 
     steps:
@@ -106,10 +121,3 @@ jobs:
 
       - name: Render Kustomize overlay
         run: kubectl kustomize deploy/k8s > /tmp/tts-raizhost-rendered.yaml
-
-      - name: Require immutable Actions
-        run: |
-          if grep -R --line-number --extended-regexp 'uses: [^ ]+@(v[0-9]+|main|master|latest)$' .github/workflows; then
-            echo 'Found a mutable GitHub Action reference' >&2
-            exit 1
-          fi
