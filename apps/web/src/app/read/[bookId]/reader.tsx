@@ -128,7 +128,6 @@ const PAGE_FETCH_LIMIT = 50;
 const SERVICE_RETRY_MS = 5_000;
 const AUTO_ADVANCE_AFTER_FAIL_MS = 1_500;
 const STALL_TIMEOUT_MS = 4_000;
-const MAX_PER_IDX_RETRIES = 2;
 // Debounce prefetch so rapid Next/Prev skipping doesn't queue
 // new kokoro synth jobs on every click. The user has to "settle"
 // on a sentence for this long before we warm the next one.
@@ -676,7 +675,16 @@ export function Reader({
       cancelled = true;
       controller.abort();
     };
-  }, [bookId, currentIdx, voiceId, speed, sentencesByIdx, releaseActiveBlob]);
+  }, [
+    bookId,
+    currentIdx,
+    voiceId,
+    speed,
+    sentencesByIdx,
+    releaseActiveBlob,
+    clearPacingTimer,
+    getActiveAudio,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -1073,7 +1081,7 @@ export function Reader({
         // don't change intent.
       });
     }
-  }, []);
+  }, [getActiveAudio]);
 
   // Funnel: cumulative-play tracking. cumulativePlayMs is the total
   // wall-time the audio has been emitting samples in this session. We
@@ -1140,7 +1148,7 @@ export function Reader({
         });
       }
     }
-  }, [currentIdx]);
+  }, [currentIdx, getActiveAudio]);
 
   const handleAudioMetadata = useCallback(() => {
     const audio = getActiveAudio();
@@ -1156,7 +1164,7 @@ export function Reader({
       measuredDurationsRef.current.set(currentIdx, audio.duration);
       setMeasuredDurationsVersion((v) => v + 1);
     }
-  }, [currentIdx]);
+  }, [currentIdx, getActiveAudio]);
 
   // Mirror the audio element's actual play/pause state into React
   // intent so the OS-driven surface (CarPlay, lock screen, Bluetooth
@@ -1193,7 +1201,7 @@ export function Reader({
     setSleepMode({ kind: "duration", expiresAt });
     setSleepRemainingMs(expiresAt - Date.now());
     rum.event("sleep_timer_started", { minutes });
-  }, []);
+  }, [getActiveAudio]);
 
   const startEndOfPageTimer = useCallback(() => {
     const current = sentencesByIdx.get(currentIdx);
@@ -1202,7 +1210,7 @@ export function Reader({
     setSleepMode({ kind: "end-of-page", setOnPage: current.page });
     setSleepRemainingMs(null);
     rum.event("sleep_timer_started", { mode: "end-of-page", page: current.page });
-  }, [currentIdx, sentencesByIdx]);
+  }, [currentIdx, sentencesByIdx, getActiveAudio]);
 
   const cancelSleepTimer = useCallback(() => {
     setSleepMode({ kind: "off" });
@@ -1210,7 +1218,7 @@ export function Reader({
     const audio = getActiveAudio();
     if (audio) audio.volume = sleepPreFadeVolumeRef.current;
     rum.event("sleep_timer_cancelled");
-  }, []);
+  }, [getActiveAudio]);
 
   const extendSleepTimer = useCallback(() => {
     setSleepMode((prev) => {
@@ -1224,7 +1232,7 @@ export function Reader({
       rum.event("sleep_timer_extended");
       return next;
     });
-  }, []);
+  }, [getActiveAudio]);
 
   // End-of-page watcher: when the active page advances past the page
   // the timer was set on, pause. No fade — the user picked "end of
@@ -1239,7 +1247,7 @@ export function Reader({
     setPlaying(false);
     setSleepMode({ kind: "off" });
     rum.event("sleep_timer_expired", { mode: "end-of-page" });
-  }, [sleepMode, currentIdx, sentencesByIdx]);
+  }, [sleepMode, currentIdx, sentencesByIdx, getActiveAudio]);
 
   // 1Hz tick while the timer is running. Drives the volume fade and
   // expires the timer. Stops once mode flips back to "off".
@@ -1272,7 +1280,7 @@ export function Reader({
     tick();
     const id = setInterval(tick, 1_000);
     return () => clearInterval(id);
-  }, [sleepMode]);
+  }, [sleepMode, getActiveAudio]);
 
   // ---------------------------------------------------------------------
   // Bookmarks
@@ -1398,7 +1406,7 @@ export function Reader({
       before,
       after,
     });
-  }, [smartRewindSeconds]);
+  }, [smartRewindSeconds, getActiveAudio]);
 
   const handleAudioError = useCallback(() => {
     const audio = getActiveAudio();
@@ -1448,7 +1456,7 @@ export function Reader({
           retryAt: Date.now() + SERVICE_RETRY_MS,
         });
       });
-  }, [bookId, currentIdx, voiceId, speed]);
+  }, [bookId, currentIdx, voiceId, speed, getActiveAudio]);
 
   // Stalled: the audio element is fetching but not making progress.
   // Belt-and-suspenders for silent stream drops. After STALL_TIMEOUT_MS
@@ -1471,7 +1479,7 @@ export function Reader({
       if (audio.readyState >= 3) return; // HAVE_FUTURE_DATA — playing now
       handleAudioError();
     }, STALL_TIMEOUT_MS);
-  }, [handleAudioError]);
+  }, [handleAudioError, getActiveAudio]);
 
   const handleAudioProgress = useCallback(() => {
     if (stallTimerRef.current) {
@@ -1528,7 +1536,15 @@ export function Reader({
       setAlert(null);
     }, delay);
     return () => clearTimeout(t);
-  }, [alert, bookId, currentIdx, voiceId, speed, releaseActiveBlob]);
+  }, [
+    alert,
+    bookId,
+    currentIdx,
+    voiceId,
+    speed,
+    releaseActiveBlob,
+    getActiveAudio,
+  ]);
 
   // ---------------------------------------------------------------------
   // Position persistence (debounced)
@@ -1675,7 +1691,15 @@ export function Reader({
       }
       // AbortError or others: leave intent set; canplay will retry.
     });
-  }, [bookId, currentIdx, voiceId, speed, alignNow]);
+  }, [
+    bookId,
+    currentIdx,
+    voiceId,
+    speed,
+    alignNow,
+    applySmartRewindIfNeeded,
+    getActiveAudio,
+  ]);
 
   const goPrev = useCallback(() => {
     setAlert(null);
@@ -1863,7 +1887,7 @@ export function Reader({
     if (audio.paused && playingRef.current) {
       void audio.play().catch(() => {});
     }
-  }, []);
+  }, [getActiveAudio]);
 
   const restartBook = useCallback(() => {
     setAlert(null);
@@ -1920,7 +1944,7 @@ export function Reader({
       audio.addEventListener("loadedmetadata", onMetaOnce, { once: true });
       advanceToIdx(targetIdx, playingRef.current);
     },
-    [currentIdx, timeline, advanceToIdx],
+    [currentIdx, timeline, advanceToIdx, getActiveAudio],
   );
 
   // ---------------------------------------------------------------------

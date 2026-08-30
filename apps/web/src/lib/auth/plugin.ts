@@ -26,12 +26,10 @@ import * as schema from "@/lib/db/schema";
 import {
   decryptSecret,
   encryptSecret,
-  generateTotpSecret,
   verifyTotpToken,
 } from "./totp";
 import {
   findMatchingCodeIndex,
-  generateRecoveryCodes,
   parseHashes,
   serializeHashes,
 } from "./recovery";

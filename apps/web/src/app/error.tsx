@@ -6,6 +6,7 @@
 // a Try-again button instead of a white screen.
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { rum } from "@/lib/rum";
@@ -62,12 +63,12 @@ export default function ErrorBoundary({
         >
           Try again
         </button>
-        <a
+        <Link
           href="/"
           className="text-sm text-muted underline-offset-4 hover:text-fg hover:underline"
         >
           Library
-        </a>
+        </Link>
       </div>
     </main>
   );

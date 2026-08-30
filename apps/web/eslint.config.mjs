@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const compat = new FlatCompat({ baseDirectory: here });
 
-export default [
+const config = [
   {
     ignores: [
       ".next/**",
@@ -15,3 +15,5 @@ export default [
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
 ];
+
+export default config;

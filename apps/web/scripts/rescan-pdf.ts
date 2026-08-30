@@ -23,7 +23,7 @@
 //   npm --prefix apps/web exec tsx scripts/rescan-pdf.ts -- --all --dry-run
 
 import fs from "node:fs/promises";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import { getDb } from "../src/lib/db";
 import * as schema from "../src/lib/db/schema";

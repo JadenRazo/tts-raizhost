@@ -45,7 +45,6 @@ type SelectorState = {
 };
 
 declare global {
-  // eslint-disable-next-line no-var
   var __ttsBackendSelectorState: SelectorState | undefined;
 }
 

@@ -6,7 +6,7 @@
 // upload pipeline and re-uploaded if the user re-runs the parse).
 // Bookmarks are unrelated and untouched.
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 

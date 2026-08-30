@@ -9,7 +9,7 @@
 // pending state, encrypts and commits to the user, then mints a session.
 
 import { notFound } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import QRCode from "qrcode";
 import { getDb } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
