@@ -2,10 +2,8 @@
 // fed by every route handler that opts in via `withMetrics` or by
 // updating the named collectors directly.
 //
-// Phase 1: registry + default Node.js metrics + http_request_duration.
-// Phase 2: custom TTS-path metrics (tts_request_duration, kokoro upstream,
-// cache hit/miss, sentences-page, position-save, prerender).
-// Phase 3: rum_* collectors fed from /api/rum.
+// Includes default Node.js metrics, HTTP/TTS/cache/backend collectors,
+// and bounded-cardinality browser RUM collectors.
 //
 // Cardinality discipline: never label by user_id, book_id, or raw text.
 // `voice` (≤8) and `text_len_bucket` (5) are the only fan-outs allowed.
@@ -32,7 +30,7 @@ if (!globalThis.__ttsMetricsRegistry) {
 
 // ---------------------------------------------------------------------
 // Generic HTTP RED metrics. Buckets favor sub-second routes; the TTS
-// route gets its own histogram in Phase 2 with an extended tail.
+// route gets its own histogram with an extended tail.
 // ---------------------------------------------------------------------
 
 export const httpRequestDurationSeconds = getOrCreateHistogram({
@@ -43,8 +41,7 @@ export const httpRequestDurationSeconds = getOrCreateHistogram({
 });
 
 // ---------------------------------------------------------------------
-// TTS path histograms (wired in Phase 2, but registered here so the
-// /api/metrics surface is stable from Phase 1 onward).
+// TTS path histograms.
 // ---------------------------------------------------------------------
 
 export const ttsRequestDurationSeconds = getOrCreateHistogram({
@@ -144,7 +141,7 @@ export const prerenderInflight = getOrCreateGauge({
 });
 
 // ---------------------------------------------------------------------
-// RUM histograms (fed from /api/rum in Phase 3).
+// RUM histograms fed from /api/rum.
 // ---------------------------------------------------------------------
 
 export const rumPlayToAudibleSeconds = getOrCreateHistogram({

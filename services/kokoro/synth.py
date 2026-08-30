@@ -15,7 +15,7 @@ Why ONNX Runtime (CPU) on the VPS:
     the perf win; both paths produce identical voices because they
     share the same Kokoro v1.0 weights.
 
-Concurrency model unchanged from Piper era:
+Concurrency model:
   - bounded concurrency via `synth_slot` (CPU-bound inference contends;
     HTTP 503 with Retry-After is the right backpressure).
   - per-stage timing in structured logs.

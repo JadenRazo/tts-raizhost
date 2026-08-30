@@ -1,12 +1,11 @@
 """Int16 PCM → Opus encoder.
 
-Pipes signed-16-bit little-endian PCM bytes (as produced by Piper) into
+Pipes signed-16-bit little-endian PCM bytes produced by the Kokoro wrapper into
 ffmpeg via stdin and streams the Opus-in-Ogg output back out. Async so
 the FastAPI handler stays non-blocking while ffmpeg runs.
 
-Why s16le and not f32le: Piper's AudioChunk exposes int16 PCM directly
-(`chunk.audio_int16_bytes`). Skipping the float→int16 conversion means
-fewer allocations on the hot path.
+The wrapper converts Kokoro float samples into bounded int16 frames before
+calling this encoder, keeping the ffmpeg input contract explicit.
 """
 
 from __future__ import annotations
@@ -56,7 +55,7 @@ async def encode_opus_stream(
 
     The first chunk's sample_rate is used to configure ffmpeg. We assume
     every subsequent chunk has the same sample rate (true for a single
-    Piper voice; mixing rates mid-stream isn't a use case we support).
+    synthesis request; mixing rates mid-stream is unsupported).
     """
     proc: asyncio.subprocess.Process | None = None
     pump_task: asyncio.Task | None = None

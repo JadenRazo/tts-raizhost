@@ -8,17 +8,9 @@ metadata:
     app.kubernetes.io/component: tts
     app.kubernetes.io/part-of: tts-raizhost
 spec:
-  # Two replicas at 2 cores each = 4 cores total cap on the 8-core box.
-  # Leaves the other 4 cores for raizhost-app, claude-tracker, k3s
-  # control-plane, and the rest of the shared tenants. Kokoro v1.0 on
-  # CPU runs at RTF ~1.0-1.5 per inference on 2 cores (slower than the
-  # previous Piper medium tier, but voice quality is materially better
-  # and the home-GPU offload covers the perf gap when available).
-  # Two concurrent slots per pod, two replicas → 4 concurrent inferences
-  # before 503 backpressure. Most user demand lands on the GPU path or
-  # cache hits, so the CPU path is a fallback rather than the steady
-  # state. Revisit replica count if `concurrent_in_flight` logs show
-  # two replicas pegged.
+  # Two replicas preserve one fallback instance during a rolling update.
+  # Capacity assumptions must be re-measured on the target node; no public
+  # benchmark result is asserted by this manifest.
   replicas: 2
   strategy:
     # RollingUpdate so a rollout doesn't take the service offline. With
@@ -73,12 +65,7 @@ spec:
             # no per-voice slice.
             - name: KOKORO_MODELS_DIR
               value: /models/kokoro
-            # Bound thread counts to match the 2-core CPU limit.
-            # intra=2 = each ONNX op uses both cores in the cgroup;
-            # one concurrent inference per pod by default keeps RTF
-            # under 1.0 on the heavier Kokoro model (vs 2 with Piper
-            # medium). The OMP/MKL/OpenBLAS variants pin underlying
-            # numerical libs so they don't spawn N-core workers.
+            # Bound numerical-library thread counts to the CPU limit.
             - name: OMP_NUM_THREADS
               value: "2"
             - name: MKL_NUM_THREADS
@@ -89,10 +76,7 @@ spec:
               value: "2"
             - name: ORT_INTER_OP_THREADS
               value: "1"
-            # One concurrent slot per pod for Kokoro. The model is
-            # heavier than Piper medium (RTF ~1.0-1.5 on 2 cores vs
-            # ~0.3-0.6); two parallel inferences would tip RTF above
-            # 1.0 and cause stuttering. Two replicas → 2 total in-flight.
+            # One concurrent slot per pod favors bounded tail latency.
             - name: KOKORO_MAX_CONCURRENT_SYNTH
               value: "1"
             # Queue timeout. 200 ms absorbs micro-bursts (prefetch race,
@@ -111,23 +95,13 @@ spec:
               cpu: "500m"
               memory: 1Gi
             limits:
-              # 2-core cap per pod. With 2 replicas, total tts cap is
-              # 4 cores on the 8-core box — leaves the other half for
-              # raizhost-app, claude-tracker, k3s, and the rest of the
-              # shared tenants.
+              # Two-core cap per pod; validate aggregate node headroom.
               cpu: "2"
-              # 2 GiB to fit Kokoro v1.0 (~330 MB ONNX + ~300 MB ORT
-              # memory arena + ~100 MB voices.bin + ffmpeg subprocess +
-              # Python runtime). Resident after warmup is ~700-900 MB;
-              # the 2 GiB ceiling absorbs the worst-case ORT pattern
-              # cache growth on long inputs. Bump if RSS climbs above
-              # ~1.5 GB sustained.
+              # Sized for model, runtime, and encoder headroom; confirm with
+              # target-environment measurements before changing.
               memory: 2Gi
-          # Lazy-load: /healthz answers immediately even before the model is in
-          # memory, so liveness has a generous startup window. Readiness gates
-          # traffic — but since /healthz returns ok=true with model_loaded=false
-          # before first synth, we accept "ready" before the model is loaded
-          # too; the first synth pays the load cost (~5s on cold start).
+          # /healthz returns 503 until the model is loaded, so readiness gates
+          # traffic while the background warmup completes.
           livenessProbe:
             httpGet:
               path: /healthz

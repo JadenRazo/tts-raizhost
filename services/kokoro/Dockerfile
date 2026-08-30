@@ -8,8 +8,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Build deps for any wheel that needs to compile. piper-phonemize ships
-# manylinux wheels for cp311; this is a safety net for transitive deps.
+# Build dependencies for any Python package that lacks a compatible wheel.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential \
@@ -51,7 +50,7 @@ RUN groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /sbin/nologin app
 
 WORKDIR /app
-COPY app.py synth.py encode.py metrics.py ./
+COPY app.py synth.py encode.py metrics.py contract.py ./
 RUN chown -R 10001:10001 /app
 
 USER 10001:10001

@@ -9,7 +9,7 @@
 //     remuxing pass on the server.
 //   - A plain <audio src=...> works in every browser, no codec quirks.
 //   - Tradeoff: ~50 ms gap between sentences. Acceptable for v1
-//     reading-aloud UX. A future Phase 6.5 can swap in MSE if the gap
+//     reading-aloud UX. A future implementation can swap in MSE if the gap
 //     becomes a real complaint.
 //
 // The /api/tts response carries `Cache-Control: private, max-age=86400,

@@ -51,7 +51,7 @@ ad-tracking stance is documented at the front door.
 - Deliberately omitted: `blob:` (no current consumer), `wasm-unsafe-eval`
   (pdfjs uses inline JS, not Wasm), `report-to` / `report-uri` (we
   don't have a CSP-report ingester yet — wire one to `/api/rum/csp` in
-  Phase 1).
+  a future CSP-report endpoint).
 
 **Apply.**
 ```bash

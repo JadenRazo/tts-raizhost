@@ -64,7 +64,7 @@ spec:
             app: tts-raizhost
           annotations:
             summary: "Kokoro queue is shedding >2% of requests"
-            description: "Synth queue saturation is causing 503s. Either bump PIPER_MAX_CONCURRENT_SYNTH or investigate slow voices."
+            description: "Synth queue saturation is causing 503s. Pause noninteractive work and investigate service latency before changing KOKORO_MAX_CONCURRENT_SYNTH."
 
         - alert: TtsCacheMissP95High
           expr: |
@@ -90,7 +90,7 @@ spec:
             app: tts-raizhost
           annotations:
             summary: "Kokoro synth-to-first-byte p95 > 1.5s"
-            description: "Piper synthesis is slower than expected. Check pod CPU saturation, voice load state, or whether INT8 is mistakenly preferred (it's slower than FP32 on this CPU)."
+            description: "Kokoro synthesis is slower than the provisional threshold. Check queueing, pod CPU pressure, model state, and recent changes."
 
         - alert: TtsCacheHitRatioLow
           expr: |

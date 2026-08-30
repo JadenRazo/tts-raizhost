@@ -1,5 +1,5 @@
 ---
-# ServiceMonitor for the kokoro (Piper) TTS service's /metrics surface.
+# ServiceMonitor for the Kokoro TTS service's /metrics surface.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

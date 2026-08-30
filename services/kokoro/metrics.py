@@ -5,13 +5,14 @@ prometheus-fastapi-instrumentator to keep label cardinality bounded —
 the instrumentator's defaults emit per-handler/per-status series for
 every endpoint, which we don't want on a streaming /tts route.
 
-Phase 1 only registers the surface; the actual observations are wired
-into app.py / synth.py / encode.py in Phase 2.
+Observations are emitted by app.py, synth.py, and encode.py.
 """
 
 from __future__ import annotations
 
 from prometheus_client import REGISTRY, Counter, Gauge, Histogram
+
+from contract import text_len_bucket
 
 # Bucket choices favor first-byte latency — most synth requests are <1s
 # to first PCM, but warm cold-starts and long sentences extend into 2s+.
@@ -69,19 +70,3 @@ synth_inputs_total = Counter(
     labelnames=('voice', 'text_len_bucket'),
     registry=REGISTRY,
 )
-
-
-def text_len_bucket(text_length: int) -> str:
-    """Bucket sentence length for label cardinality control.
-
-    xs<50, s<200, m<500, l<1000, xl<2000.
-    """
-    if text_length < 50:
-        return 'xs'
-    if text_length < 200:
-        return 's'
-    if text_length < 500:
-        return 'm'
-    if text_length < 1000:
-        return 'l'
-    return 'xl'
