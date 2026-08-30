@@ -15,9 +15,9 @@
 --
 -- Cache note: tts_cache rows are content-addressed by sha256 over
 -- (voice|speed|sentenceText). Old Piper-era cache entries become
--- unreachable after this migration; they orphan on disk until the
--- nightly 60-day eviction CronJob (PLAN.md Phase 8) reaps them. No
--- forced cleanup needed.
+-- unreachable after this migration; they remain on disk until the
+-- environment's cache-retention job reaps them. No forced cleanup is
+-- performed by this migration.
 
 UPDATE user_settings
 SET voice_id = 'af_heart'

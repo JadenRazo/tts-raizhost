@@ -37,19 +37,13 @@ export type PrerenderRunStatus =
   | "complete"
   | "failed";
 
-// Pause this long between sentences so an active reading session can
-// interleave a real synth request without queueing for ages behind the
-// prerender. With Piper medium synthesizing a typical sentence in
-// ~400-700 ms, a 400 ms pause renders ~70 sentences/min and a 4500-
-// sentence book completes in ~65 min. Active readers still get fair
-// access via the synth-slot semaphore (PIPER_MAX_CONCURRENT_SYNTH=2);
-// this pause is just a courtesy throttle on top of that.
+// Pause between sentences so an active reading session can interleave a
+// request instead of sitting behind an uninterrupted prerender loop. This is
+// a courtesy throttle, not a fairness guarantee or a benchmark-derived value.
 const INTER_SENTENCE_PAUSE_MS = 400;
 
-// Page sentences in batches so we don't hold ~4500 row payloads in
-// memory at once on the single web pod (limits.cpu: 1000m). A 100-row
-// page balances DB chatter (45 round-trips for a 4500-sentence book)
-// against per-batch memory pressure (~50 KB).
+// Page sentences in batches to bound memory use. The 100-row value is a
+// starting point and should be tuned from database and heap measurements.
 const SENTENCE_PAGE_SIZE = 100;
 
 // Drain a ReadableStream into a single Buffer.

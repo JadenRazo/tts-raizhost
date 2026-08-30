@@ -38,9 +38,9 @@ export const env = {
     return optional("PUBLIC_BASE_URL", "http://localhost:3000")!;
   },
   // Primary TTS backend — preferred until the circuit breaker opens.
-  // In prod this points at the home-GPU service over Tailscale
-  // (e.g. http://desktop-7hf36jh:8000). Falls back to TTS_FALLBACK_URL,
-  // then to the legacy KOKORO_URL, then to localhost for dev.
+  // In production this points at a private GPU service. Keep the endpoint
+  // in environment-specific secret/config management, not source control.
+  // Falls back to TTS_FALLBACK_URL, then legacy KOKORO_URL, then localhost.
   get TTS_PRIMARY_URL() {
     return optional("TTS_PRIMARY_URL")
       ?? optional("KOKORO_URL")

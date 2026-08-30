@@ -7,9 +7,8 @@
 // cache cleanly when we change the synthesis pipeline (e.g. ffmpeg flags,
 // post-processing) without needing a destructive migration.
 //
-// Path-traversal hardening: voiceId must match the Piper id pattern
-// (^[a-z]{2}_[A-Z]{2}-[a-z][a-z0-9_]*-[a-z]+$). Anything else throws
-// before touching the filesystem.
+// Path-traversal hardening: voiceId must match the Kokoro ID pattern used
+// below. Anything else throws before touching the filesystem.
 
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";

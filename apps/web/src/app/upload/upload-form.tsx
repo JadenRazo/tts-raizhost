@@ -150,10 +150,8 @@ async function parsePdf(
 
 export function UploadForm({
   maxBytes,
-  maxBooks,
 }: {
   maxBytes: number;
-  maxBooks: number;
 }) {
   const router = useRouter();
   const [stage, setStage] = useState<Stage>({ kind: "idle" });

@@ -9,18 +9,23 @@
 //     2s) AND POST /tts (must yield first body byte in 5s).
 //   - 3 consecutive probe failures while active=='gpu' flip to 'cpu'.
 //   - First successful probe flips back to 'gpu'.
-//   - Per-request fallback: a single fetch failure on the active
-//     backend bumps consecutiveFails by 1 and serves the request via
-//     the fallback URL — does NOT preemptively flip state. The probe
-//     loop is the source of truth.
+//   - Per-request fallback serves from the fallback URL but does not alter
+//     probe-owned circuit state. The probe loop is the source of truth.
 //   - Single-replica assumption: the selector state is process-local.
 //     If tts-web ever scales past replicas:1, replicas will disagree
-//     and metrics will mix labels — see PLAN.md §15.J.
+//     and metrics will mix labels — see docs/architecture.md.
 //
 // The probe loop is started from instrumentation.ts (Next.js calls the
 // `instrumentation` export once per server lifecycle).
 
 import { env } from "@/lib/env";
+import { probePrimaryBackend } from "@/lib/tts-backend-probe";
+import {
+  afterPrimaryProbe,
+  afterRequest,
+  type Backend,
+  type BackendCircuitState,
+} from "@/lib/tts-backend-state";
 import {
   ttsBackendActive,
   ttsBackendHealthProbeDurationSeconds,
@@ -28,11 +33,11 @@ import {
   ttsBackendLastProbeAtSeconds,
 } from "@/lib/metrics";
 
-export type Backend = "gpu" | "cpu";
+export type { Backend } from "@/lib/tts-backend-state";
 
 type SelectorState = {
   active: Backend;
-  consecutiveFails: number;
+  consecutiveProbeFails: number;
   lastSuccessAtMs: number;
   lastFailureAtMs: number;
   lastProbeAtMs: number;
@@ -40,23 +45,17 @@ type SelectorState = {
 };
 
 declare global {
-  // eslint-disable-next-line no-var
   var __ttsBackendSelectorState: SelectorState | undefined;
 }
 
-const FAIL_THRESHOLD = 3;
 const PROBE_INTERVAL_MS = 60_000;
-const HEALTHZ_TIMEOUT_MS = 2_000;
-const SYNTH_HEALTH_TIMEOUT_MS = 5_000;
-const HEALTH_VOICE = "af_heart";
-const HEALTH_TEXT = "warmup test";
 
 function initState(): SelectorState {
   return {
     // Optimistic start: assume primary is up. The first probe will
     // correct this within PROBE_INTERVAL_MS even if it's wrong.
     active: "gpu",
-    consecutiveFails: 0,
+    consecutiveProbeFails: 0,
     lastSuccessAtMs: 0,
     lastFailureAtMs: 0,
     lastProbeAtMs: 0,
@@ -86,19 +85,23 @@ export function getFallbackUrl(): string {
   return env.TTS_FALLBACK_URL;
 }
 
-/** Per-request fallback: the active backend just failed. Bump the fail
- * counter so the next probe iteration can compare against threshold,
- * but do NOT flip state here — the probe loop owns that transition. */
+/** Record timing for a failed request without changing probe-owned state. */
 export function recordRequestFailure(): void {
-  state.consecutiveFails += 1;
+  applyCircuitState(afterRequest(state));
   state.lastFailureAtMs = Date.now();
 }
 
-/** A request succeeded against the active backend. Reset the counter
- * but otherwise no state change. */
+/** Record timing for a successful request without changing probe-owned state. */
 export function recordRequestSuccess(): void {
-  state.consecutiveFails = 0;
+  applyCircuitState(afterRequest(state));
   state.lastSuccessAtMs = Date.now();
+}
+
+function applyCircuitState(next: BackendCircuitState): void {
+  const changed = next.active !== state.active;
+  state.active = next.active;
+  state.consecutiveProbeFails = next.consecutiveProbeFails;
+  if (changed) setActiveGauge(state.active);
 }
 
 async function probePrimary(): Promise<void> {
@@ -107,52 +110,25 @@ async function probePrimary(): Promise<void> {
   let outcome: "ok" | "fail" = "fail";
 
   try {
-    // 1. /healthz — fast 200 check.
-    const h = await fetch(`${url}/healthz`, {
-      signal: AbortSignal.timeout(HEALTHZ_TIMEOUT_MS),
-    });
-    if (!h.ok) throw new Error(`healthz ${h.status}`);
-
-    // 2. /tts — must produce first byte under SYNTH_HEALTH_TIMEOUT_MS.
-    //    Detects "uvicorn up but model wedged" failures that /healthz
-    //    can't see.
-    const r = await fetch(`${url}/tts`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        text: HEALTH_TEXT,
-        voice: HEALTH_VOICE,
-        speed: 1.0,
-      }),
-      signal: AbortSignal.timeout(SYNTH_HEALTH_TIMEOUT_MS),
-    });
-    if (!r.ok || !r.body) throw new Error(`synth ${r.status}`);
-    const reader = r.body.getReader();
-    const first = await reader.read();
-    if (first.done) throw new Error("empty body");
-    reader.cancel().catch(() => {});
+    const probe = await probePrimaryBackend(url);
+    if (!probe.ok) throw new Error(probe.reason);
 
     outcome = "ok";
-    state.consecutiveFails = 0;
+    const previous = state.active;
+    applyCircuitState(afterPrimaryProbe(state, true));
     state.lastSuccessAtMs = Date.now();
-    if (state.active !== "gpu") {
+    if (previous !== state.active) {
       console.info("[tts] backend selector flipping cpu -> gpu");
-      state.active = "gpu";
-      setActiveGauge(state.active);
     }
   } catch (e) {
-    state.consecutiveFails += 1;
+    const previous = state.active;
+    applyCircuitState(afterPrimaryProbe(state, false));
     state.lastFailureAtMs = Date.now();
-    if (
-      state.consecutiveFails >= FAIL_THRESHOLD &&
-      state.active === "gpu"
-    ) {
+    if (previous !== state.active) {
       console.warn("[tts] backend selector flipping gpu -> cpu", {
-        fails: state.consecutiveFails,
+        fails: state.consecutiveProbeFails,
         reason: e instanceof Error ? e.message : String(e),
       });
-      state.active = "cpu";
-      setActiveGauge(state.active);
     }
   } finally {
     state.lastProbeAtMs = Date.now();
