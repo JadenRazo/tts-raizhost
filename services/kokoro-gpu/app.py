@@ -7,10 +7,8 @@ Endpoints:
   GET  /metrics   — Prometheus scrape (proxied through tts-web)
 
 Engine: Kokoro v1.0 (https://huggingface.co/hexgrad/Kokoro-82M) via the
-kokoro PyPI package on PyTorch CUDA. Runs on the user's home Windows
-machine (RTX 5070) as a Windows service via NSSM; reachable from the
-VPS only over the private Tailscale tailnet (tag-restricted ACL —
-see deploy/tailscale-acl.json).
+kokoro PyPI package on PyTorch CUDA. The intended deployment is a private
+GPU host; its address and network policy are environment configuration.
 
 Voices are identical to services/kokoro/ (the CPU/fallback path) so
 cached audio and DB voice IDs are interchangeable across backends.
@@ -21,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import sys
 import time
 from typing import Any
@@ -31,6 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 from pydantic import BaseModel, Field, ValidationError
 
+from contract import sanitize_for_synth
 from encode import encode_opus_stream
 from metrics import (
     overflow_total,
@@ -85,8 +83,8 @@ def _span(name: str, **attrs: Any):
             pass
     return span
 
-# Structured-JSON logging. Emit one object per line so the cluster's log
-# pipeline (Promtail in Phase 8) can index without a custom parser.
+# Structured-JSON logging. Emit one object per line so a log pipeline can
+# index the service without a custom parser.
 class _JsonFormatter(logging.Formatter):
     _RESERVED = {
         'name', 'msg', 'args', 'levelname', 'levelno', 'pathname', 'filename',
@@ -142,26 +140,6 @@ class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=2000)
     voice: str = Field(...)
     speed: float = Field(..., ge=0.5, le=2.0)
-
-
-# Last-mile defensive sanitizer mirroring services/kokoro/app.py. Kept in
-# sync between the two backends so a sentence that synthesizes cleanly on
-# CPU also synthesizes cleanly on GPU.
-_KOKORO_CONTROL_CHARS = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
-_KOKORO_UNICODE_WS = re.compile(
-    '[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]'
-)
-_KOKORO_INVISIBLES = re.compile(
-    '[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]'
-)
-
-
-def sanitize_for_synth(text: str) -> str:
-    s = _KOKORO_CONTROL_CHARS.sub('', text)
-    s = _KOKORO_INVISIBLES.sub('', s)
-    s = _KOKORO_UNICODE_WS.sub(' ', s)
-    s = re.sub(r'[ \t]+', ' ', s).strip()
-    return s
 
 
 @app.exception_handler(ValidationError)

@@ -67,10 +67,10 @@ const ALLOWED_EVENTS = new Set([
   "play_to_audible",
   "stall",
   "web_vital",
-  // Phase 1.1 — global JS error capture (window.error,
+  // Global JS error capture (window.error,
   // unhandledrejection, React error boundary).
   "js_error",
-  // Phase 1.3 — funnel events.
+  // Funnel events.
   "upload_succeeded",
   "read_started",
   "read_engaged_30s",

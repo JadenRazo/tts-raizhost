@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { requireAuth } from "@/lib/auth/session";
 import { MAX_BOOKS_PER_USER, MAX_FILE_BYTES } from "@/lib/books";
 import { UploadForm } from "./upload-form";
@@ -17,18 +19,15 @@ export default async function UploadPage() {
         {Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB each.
       </p>
       <div className="mt-8">
-        <UploadForm
-          maxBytes={MAX_FILE_BYTES}
-          maxBooks={MAX_BOOKS_PER_USER}
-        />
+        <UploadForm maxBytes={MAX_FILE_BYTES} />
       </div>
       <p className="mt-10 text-sm text-muted">
-        <a
+        <Link
           href="/"
           className="underline underline-offset-4 hover:text-fg decoration-border-strong hover:decoration-fg"
         >
           Back to library
-        </a>
+        </Link>
       </p>
     </main>
   );

@@ -28,10 +28,8 @@ spec:
     spec:
       serviceAccountName: tts-web
       automountServiceAccountToken: false
-      # hostNetwork lets the pod reach shared-postgres at 127.0.0.1:5433
-      # (the docker-proxy bind on the host loopback). Caddy on the host
-      # proxies tts.raizhost.com → 127.0.0.1:3101 directly, so we don't
-      # need a Service or Ingress in-cluster.
+      # This environment integrates with host-local services and its front
+      # door through host networking. Re-evaluate this exception before reuse.
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       securityContext:
@@ -67,19 +65,14 @@ spec:
               # additionally rejects requests carrying X-Forwarded-For
               # or non-RFC1918 source IPs as a defense-in-depth.
               value: 0.0.0.0
-            # TTS backend routing. Primary = home GPU box reached over
-            # Tailscale (resolved via MagicDNS — works because tts-web is
-            # hostNetwork:true and inherits the node's resolv.conf which
-            # tailscaled populates). Fallback = in-cluster CPU pod via
-            # ClusterIP. Selector probes primary every 60s; 3 consecutive
-            # misses flip to fallback. See lib/tts-backend-selector.ts.
-            # Tailscale IP rather than MagicDNS name. The pod uses
-            # ClusterFirstWithHostNet (resolver = CoreDNS at 10.43.0.10),
-            # which forwards upstream queries to the host's WAN DNS, not
-            # to the Tailscale MagicDNS resolver at 100.100.100.100. The
-            # IP is stable per device for the life of the tailnet.
+            # The preferred endpoint is private environment configuration.
+            # Do not commit it to this public manifest. Three consecutive
+            # failed probes select the in-cluster fallback.
             - name: TTS_PRIMARY_URL
-              value: http://100.107.3.72:8000
+              valueFrom:
+                secretKeyRef:
+                  name: tts-app
+                  key: TTS_PRIMARY_URL
             - name: TTS_FALLBACK_URL
               value: http://tts-kokoro:8000
             # Resource detectors so traces carry pod/node identity.

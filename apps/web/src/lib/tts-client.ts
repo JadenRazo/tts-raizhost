@@ -121,7 +121,6 @@ export async function synthesizeStream(
     // Chain abort cleanup to the stream lifetime — the timeout above was
     // a fallback, but in practice the stream consumer drives completion.
     const body = res.body;
-    body.getReader; // ensure ReadableStream typing
     return body.pipeThrough(
       new TransformStream({
         flush() {
